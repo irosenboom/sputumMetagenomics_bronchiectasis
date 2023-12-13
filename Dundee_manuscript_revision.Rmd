@@ -1,0 +1,2777 @@
+---
+title: "Dundee_finalAnalysis"
+output: html_document
+date: "2022-11-18"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+# clean global R environment
+rm(list = ls())
+
+options(scipen = 9999)
+
+# required R packages
+
+library(readxl)
+library(dplyr)
+library(rstatix)
+library(ggplot2)
+library(ggpubr)
+library(RColorBrewer)
+library(readr)
+library(funrar)
+library(vegan)
+library(ggrepel)
+library(gplots)
+library(treemap)
+library(compositions)
+library(cowplot)
+library(pheatmap)
+
+
+library(forcats)
+library(factoextra)
+library(ggridges)
+```
+
+#load files
+```{r}
+metadata <- read_excel("working_metadataDundee.xlsx")
+
+metadata <- data.frame(metadata)
+rownames(metadata) <- metadata$Lab_ID
+
+#groups based on Chalmers 2013, The Bronchiectasis Severity Index
+
+metadata$age_group <- with(metadata,
+                           ifelse(metadata$age < 50, "A",
+                           ifelse(metadata$age >= 50 & metadata$age < 70, "B",
+                           ifelse(metadata$age >= 70 & metadata$age < 80, "C",
+                           ifelse(metadata$age >= 80, "D", NA)))))
+
+metadata$BMI_group <- with(metadata,
+                     ifelse(metadata$BMI < 18.5, "A",
+                     ifelse(metadata$BMI <= 25 & metadata$BMI >= 18.5, "B",
+                     ifelse(metadata$BMI <= 30 & metadata$BMI > 25, "C",
+                     ifelse(metadata$BMI > 30, "D", NA)))))
+
+metadata$FEV1_group <- with(metadata,
+                       ifelse(metadata$FEV1. > 0.80, "A",
+                       ifelse(metadata$FEV1. > 0.50 & metadata$FEV1. <= 0.80, "B",
+                       ifelse(metadata$FEV1. > 0.30 & metadata$FEV1. <= 0.50, "C",
+                       ifelse(metadata$FEV1. <= 0.30, "D", NA)))))
+
+metadata$hospital_group <- with(metadata,
+                          ifelse(metadata$no_of_hospitalisations_for_resp_problems_exac_in_the_past_12_months > 0, "yes", "no"))
+
+metadata$exacerbation_group <- with(metadata,
+                               ifelse(metadata$No_of_exac_in_the_past_year == 0, "A",
+                               ifelse(metadata$No_of_exac_in_the_past_year > 0 &
+                                        metadata$No_of_exac_in_the_past_year <= 2, "B",
+                               ifelse(metadata$No_of_exac_in_the_past_year >= 3, "C", NA))))
+
+
+metadata$mrc_group <- with(metadata,
+                      ifelse(metadata$MRC_dyspnoea_score < 4, "A",
+                      ifelse(metadata$MRC_dyspnoea_score == 4, "B",
+                      ifelse(metadata$MRC_dyspnoea_score == 5, "C", NA))))
+#96xA vs 10xB
+
+#metadata$MRC_dyspnoea_score <- as.factor(metadata$MRC_dyspnoea_score)
+
+
+
+```
+
+#statistical testing of clinical metadata
+```{r}
+
+#for this, delete longitudinal samples: Dundee007, Dundee034, Dundee036, Dundee039
+metadata_single <- metadata[-c(7,34,36,39),]
+
+#exclude Dundee048: only 173 Neisseria mucosa reads, although 14 mio sequencing reads (outlier in beta diversity analysis)
+metadata_single <- metadata_single[-c(44),]
+
+table(metadata_single$aetiology)
+metadata_single$aetiology <- with(metadata_single,
+                                  ifelse(aetiology == "ABPA", "ABPA", 
+                                  ifelse(aetiology == "alpha-1 antitrypsin deficiency", 
+                                         "alpha-1AntiTrypsinDeficiency",
+                                  ifelse(aetiology == "Aspiration", "Aspiration",
+                                  ifelse(aetiology == "asthma", "Asthma",
+                                  ifelse(aetiology == "Asthma", "Asthma",
+                                  ifelse(aetiology == "CFTRRD", "CFTR-RD",
+                                  ifelse(aetiology == "copd", "COPD",
+                                  ifelse(aetiology == "COPD", "COPD",
+                                  ifelse(aetiology == "idiopathic", "idiopathic",
+                                  ifelse(aetiology == "immunodeficiency", "immunodeficiency",
+                                  ifelse(aetiology == "inflammatoryboweldisease",
+                                         "InflammatoryBowelDisease",
+                                  ifelse(aetiology == "NTM", "NTM",
+                                  ifelse(aetiology == "PCD", "PCD",
+                                  ifelse(aetiology == "postinfective", "post-infective",
+                                  ifelse(aetiology == "Rheumatoid arthritis", "RheumatoidArthritis", 
+                                         NA))))))))))))))))
+
+table(metadata_single$BMI_group)
+table(metadata_single$age_group)
+
+##gender
+kruskal.test(metadata_single$MRC_dyspnoea_score ~ metadata_single$sex)
+#p=0.89
+kruskal.test(metadata_single$mrc_group ~ metadata_single$sex)
+#p=0.007
+
+table(metadata_single$mrc_group)
+#92x A - 9x B, B nur in Männern
+
+
+kruskal.test(metadata_single$No_of_exac_in_the_past_year ~ metadata_single$sex)
+#p=0.94
+kruskal.test(metadata_single$exacerbation_group ~ metadata_single$sex)
+#p=0.96
+
+
+kruskal.test(metadata_single$no_of_hospitalisations_for_resp_problems_exac_in_the_past_12_months ~ metadata_single$sex)
+#p=0.22
+kruskal.test(metadata_single$hospital_group ~ metadata_single$sex)
+#p=0.26
+
+
+t.test(metadata_single$BMI ~ metadata_single$sex)
+#p=0.07
+kruskal.test(metadata_single$BMI_group ~ metadata_single$sex)
+#p=0.07
+
+
+t.test(metadata_single$age ~ metadata_single$sex)
+#p=0.29
+kruskal.test(metadata_single$age_group ~ metadata_single$sex)
+#p=0.13
+
+
+
+###commensals
+metadata_single$group_commensal <- with(metadata_single,
+                          ifelse(metadata_single$group == "commensals", "commensal",
+                          ifelse(metadata_single$group == "PA", "other",
+                          ifelse(metadata_single$group == "PA_SA", "other",
+                          ifelse(metadata_single$group == "HI", "other",
+                          ifelse(metadata_single$group == "HI_MC", "other",
+                          ifelse(metadata_single$group == "MC", "other",
+                          ifelse(metadata_single$group == "SA", "other",
+                          ifelse(metadata_single$group == "Candida", "other",
+                          ifelse(metadata_single$group == "Herpesvirus", "other",
+                          ifelse(metadata_single$group == "SM", "other",
+                          ifelse(metadata_single$group == "other", "other",
+                          ifelse(metadata_single$group == "P_other", "other",
+                          ifelse(metadata_single$group == "SL", "other", 
+                          ifelse(metadata_single$group == "NM", "other", 
+                          ifelse(metadata_single$group == "EF", "other", NA))))))))))))))))
+
+table(metadata_single$group_commensal)
+
+
+metadata_single %>%
+  kruskal_test(group_commensal ~ BSI)
+#p=0.022
+
+metadata_single %>% 
+  dunn_test(group_commensal ~ BSI, p.adjust.method = "BH")
+ 
+
+aa <- subset(metadata_single, metadata_single$group_commensal == "commensal")
+bb <- subset(metadata_single, metadata_single$group_commensal == "other")
+
+count(aa, aa$bronchiectasis_severity_index)
+count(bb, bb$bronchiectasis_severity_index)
+
+###PA                       
+metadata_single$group_PA <- with(metadata_single,
+                          ifelse(metadata_single$group == "commensals", "other",
+                          ifelse(metadata_single$group == "PA", "Pseudomonas",
+                          ifelse(metadata_single$group == "PA_SA", "Pseudomonas",
+                          ifelse(metadata_single$group == "HI", "other",
+                          ifelse(metadata_single$group == "HI_MC", "other",
+                          ifelse(metadata_single$group == "MC", "other",
+                          ifelse(metadata_single$group == "SA", "other",
+                          ifelse(metadata_single$group == "Candida", "other",
+                          ifelse(metadata_single$group == "Herpesvirus", "other",
+                          ifelse(metadata_single$group == "SM", "other",
+                          ifelse(metadata_single$group == "other", "other",
+                          ifelse(metadata_single$group == "P_other", "other",
+                          ifelse(metadata_single$group == "SL", "other",
+                          ifelse(metadata_single$group == "NM", "other", 
+                          ifelse(metadata_single$group == "EF", "other", NA))))))))))))))))
+
+table(metadata_single$group_PA)
+
+#BSI
+metadata_single %>%
+  kruskal_test(group_PA ~ BSI)
+#p=0.07
+
+metadata_single %>% 
+  dunn_test(group_PA ~ BSI, p.adjust.method = "BH")
+
+aa <- subset(metadata_single, metadata_single$group_PA == "Pseudomonas")
+bb <- subset(metadata_single, metadata_single$group_PA == "other")
+
+count(aa, aa$BSI)
+count(bb, bb$BSI)
+
+
+#t test
+t.test(metadata_single$FEV1. ~ metadata_single$group_PA)
+#p=0.62
+
+t.test(metadata_single$long_term_antibiotic ~ metadata_single$group_PA)
+#p=0.048
+
+t.test(metadata_single$Inhaled_steroid ~ metadata_single$group_PA)
+#p=0.51
+
+
+##HI
+metadata_single$group_HI <- with(metadata_single,
+                          ifelse(metadata_single$group == "commensals", "other",
+                          ifelse(metadata_single$group == "PA", "other",
+                          ifelse(metadata_single$group == "PA_SA", "other",
+                          ifelse(metadata_single$group == "HI", "Haemophilus",
+                          ifelse(metadata_single$group == "HI_MC", "Haemophilus",
+                          ifelse(metadata_single$group == "MC", "other",
+                          ifelse(metadata_single$group == "SA", "other",
+                          ifelse(metadata_single$group == "Candida", "other",
+                          ifelse(metadata_single$group == "Herpesvirus", "other",
+                          ifelse(metadata_single$group == "SM", "other",
+                          ifelse(metadata_single$group == "other", "other",
+                          ifelse(metadata_single$group == "P_other", "other",
+                          ifelse(metadata_single$group == "SL", "other",
+                          ifelse(metadata_single$group == "NM", "other", 
+                          ifelse(metadata_single$group == "EF", "other", NA))))))))))))))))
+
+table(metadata_single$group_HI)
+
+#BSI
+metadata_single %>%
+  kruskal_test(group_HI ~ BSI)
+#p=0.57
+
+metadata_single %>% 
+  dunn_test(group_HI ~ BSI, p.adjust.method = "BH")
+
+
+aa <- subset(metadata_single, metadata_single$group_HI == "Haemophilus")
+bb <- subset(metadata_single, metadata_single$group_HI == "other")
+
+count(aa, aa$BSI)
+count(bb, bb$BSI)
+
+
+#t test
+t.test(metadata_single$FEV1. ~ metadata_single$group_HI)
+#p=0.24
+
+t.test(metadata_single$long_term_antibiotic ~ metadata_single$group_HI)
+#p=0.31
+
+t.test(metadata_single$Inhaled_steroid ~ metadata_single$group_HI)
+#p=0.31
+
+
+
+##remaining individual samples
+metadata_individuals <- subset(metadata_single, group_commensal == "other" & group_HI == "other" &
+                                 group_PA == "other")
+
+metadata_single$groupShort <- with(metadata_single,
+                            ifelse(group_PA == "Pseudomonas", "Pseudomonas",
+                            ifelse(group_HI == "Haemophilus", "Haemophilus",
+                            ifelse(group_commensal == "commensal", "Commensals", "individual"))))
+
+
+BSI_distribution <- metadata_single[,c(1,6,42)]
+
+ggplot(BSI_distribution, aes(x = BSI, fill = groupShort)) +
+  geom_bar(stat = "count", position = position_dodge(0.93)) +
+  scale_fill_manual(values = c("Commensals" = "lightskyblue",
+                               "Haemophilus" = "gold",
+                               "Pseudomonas" = "darkgreen",
+                               "individual" = "grey")) +
+  labs(x = "Bronchiectasis Severity Index", y = "Count") +
+  coord_flip() +
+  theme_pubr(border = TRUE)
+
+ggplot(BSI_distribution, aes(x = groupShort, fill = BSI)) +
+  geom_bar(stat = "count", position = position_dodge(0.93)) +
+  scale_fill_manual(values = c("mild" = "#FED98E",
+                               "moderate" = "#FE9929",
+                               "severe" = "#CC4C02")) +
+  labs(x = "Group", y = "Count") +
+  coord_flip() +
+  theme_pubr(border = TRUE)
+
+
+BSI_distribution %>%
+  kruskal_test(groupShort ~ BSI)
+
+BSI_distribution %>% 
+  dunn_test(groupShort ~ BSI, p.adjust.method = "BH")
+
+BSI_distribution %>%
+  kruskal_test(BSI ~ groupShort)
+
+BSI_distribution %>%
+  dunn_test(BSI ~ groupShort, p.adjust.method = "BH")
+
+```
+
+
+#load abundance table
+```{r}
+RPMM_BE <- read_delim("RPMM_wochenende.rep.us.raspir.merged_final.csv", 
+    delim = ";", escape_double = FALSE, trim_ws = TRUE)
+
+RPMM_BE <- data.frame(RPMM_BE)
+
+rownames(RPMM_BE) <- RPMM_BE$organism
+RPMM_BE$organism <- NULL
+
+#exclude longitudinal samples Dundee007, Dundee034, Dundee036, Dundee039 & exclude Dundee048
+RPMM_BE_single <- RPMM_BE[,-c(7,34,36,39,48)]
+
+#####make relative abundance table
+RPMM_BE_single_t <- data.frame(t(RPMM_BE_single))
+
+BE_single_rel_t <- make_relative(as.matrix(RPMM_BE_single_t))
+BE_single_rel_t <- data.frame(BE_single_rel_t)
+
+BE_single_rel <- data.frame(t(BE_single_rel_t))
+
+#sorting
+BE_single_rel$rowsum <- rowSums(BE_single_rel)
+sum <- sum(BE_single_rel$rowsum)
+BE_single_rel$abundance <- (BE_single_rel$rowsum / sum) * 100
+BE_single_rel <- BE_single_rel[order(BE_single_rel$abundance, decreasing = TRUE),]
+BE_single_rel$cumsum <- cumsum(BE_single_rel$abundance)
+#95% most abundant bis Bifidobacterium longum
+
+BE_single_rel$cumsum <- NULL
+BE_single_rel$abundance <- NULL
+BE_single_rel$rowsum <- NULL
+
+#abundance filtering: exclude every species where every column has a threshold below 1%
+#abundance > 1% in at least one sample
+top_abundant <- BE_single_rel[!apply(BE_single_rel<0.01, 1, all, na.rm=TRUE),]
+#102 species
+
+#prevalence filtering: species must appear in 10% of all samples
+prev_filt_abund = 90
+
+BE_prev <- BE_single_rel
+
+n_prev = round(length(colnames(BE_prev)) * prev_filt_abund / 100)
+BE_prev[BE_prev == 0] <- NA
+BE_prev <- BE_prev[rowSums(is.na(BE_prev)) < n_prev, ]
+BE_prev[is.na(BE_prev)] <- 0
+#70 species
+
+#combine abundance and prevalence filtered datasets
+#110 species
+BE_filt <- unique(rbind(BE_prev, top_abundant))
+
+BE_t <- data.frame(t(BE_filt))
+
+#make new relative abundance table to again obtain 100%
+BE_t <- make_relative(as.matrix(BE_t))
+BE_t <- data.frame(BE_t)
+
+BE <- data.frame(t(BE_t))
+BE <- BE[order(rowSums(BE), decreasing = TRUE),]
+
+BE_t <- data.frame(t(BE))
+
+```
+
+
+#load healthy metadata and abundance table
+```{r}
+
+metadata_healthy <- read_delim("metadata_healthy.csv", 
+    delim = ";", escape_double = FALSE, trim_ws = TRUE)
+metadata_healthy <- data.frame(metadata_healthy)
+
+rownames(metadata_healthy) <- metadata_healthy$sample_name
+
+
+RPMM_healthy <- read_delim("RPMM_healthy_wochenende.rep.us.raspir.merged.taxonomy_bearbeitet.csv", 
+    delim = ";", escape_double = FALSE, trim_ws = TRUE)
+
+RPMM_healthy <- data.frame(RPMM_healthy)
+
+rownames(RPMM_healthy) <- RPMM_healthy$species
+RPMM_healthy$species <- NULL
+
+
+#test which samples are unique for RPMM and/or metadata
+#test_healthy <- merge(RPMM_healthy_t, metadata_healthy, by = 0, 
+#                      all = TRUE)
+#rownames(test_healthy) <- test_healthy$Row.names
+#test_healthy00 <- test_healthy[,c(1,161,162)]
+##results: Sp_104&Sp_291 only in metadata, Sp_282 only as fastq
+
+#metadata healthy: 157 samples, RPMM healthy
+#exclude Sp_282 in metadata, exclude Sp_104 & Sp_291 in RPMM
+metadata_healthy <- metadata_healthy[-c(2,36),]
+RPMM_healthy$Sp_282 <- NULL
+
+##add age group
+metadata_healthy$ageGroup <- with(metadata_healthy,
+                                  ifelse(metadata_healthy$age < 20, "A",
+                                  ifelse(metadata_healthy$age >= 20 & age < 50, "B",
+                                  ifelse(metadata_healthy$age >=50, "C", NA))))
+
+
+metadata_healthy <- metadata_healthy[order(rownames(metadata_healthy)),]
+
+
+#adapt filtering from bronchiectasis
+#exclude people <20 years
+#####make relative abundance table
+RPMM_healthy_t <- data.frame(t(RPMM_healthy))
+RPMM_healthy_t <- RPMM_healthy_t[order(rownames(RPMM_healthy_t)),]
+
+RPMM_healthy_t$ageGroup <- metadata_healthy$ageGroup
+RPMM_healthy_t <- subset(RPMM_healthy_t, ageGroup!="A")
+RPMM_healthy_t$ageGroup <- NULL
+
+metadata_healthy <- subset(metadata_healthy, ageGroup!="A")
+
+#export new metadata
+write.table(metadata_healthy,
+            file = "metadata_healthy_filt20years.csv",
+            col.names = TRUE, sep = ";")
+
+#exclude smokers from healthy controls: Sp115, Sp155, Sp281, Sp320, Sp414, Sp416, Sp768, Sp941
+smokersToRemove <- c("Sp_115", "Sp_155", "Sp_281", "Sp_320", "Sp_414", "Sp_416", 
+                     "Sp_768", "Sp_941")
+
+metadata_healthy <- metadata_healthy[!(row.names(metadata_healthy) %in% smokersToRemove),]
+RPMM_healthy_t <- RPMM_healthy_t[!(row.names(RPMM_healthy_t) %in% smokersToRemove),]
+
+
+healthy_rel_t <- make_relative(as.matrix(RPMM_healthy_t))
+healthy_rel_t <- data.frame(healthy_rel_t)
+
+healthy_rel <- data.frame(t(healthy_rel_t))
+
+#sorting
+#healthy_rel$rowsum <- rowSums(healthy_rel)
+#sum <- sum(healthy_rel$rowsum)
+#healthy_rel$abundance <- (healthy_rel$rowsum / sum) * 100
+#healthy_rel <- healthy_rel[order(healthy_rel$abundance, decreasing = TRUE),]
+#healthy_rel$cumsum <- cumsum(healthy_rel$abundance)
+#95% most abundant bis Streptococcus anginosus
+
+#healthy_rel$cumsum <- NULL
+#healthy_rel$abundance <- NULL
+#healthy_rel$rowsum <- NULL
+
+#abundance filtering: exclude every species where every column has a threshold below 1%
+#abundance > 1% in at least one sample
+top_abundant_h <- healthy_rel[!apply(healthy_rel<0.01, 1, all, na.rm=TRUE),]
+#70 species
+
+#prevalence filtering: species must appear in 10% of all samples
+prev_filt_abund = 90
+
+healthy_prev <- healthy_rel
+
+n_prev_h = round(length(colnames(healthy_prev)) * prev_filt_abund / 100)
+healthy_prev[healthy_prev == 0] <- NA
+healthy_prev <- healthy_prev[rowSums(is.na(healthy_prev)) < n_prev_h, ]
+healthy_prev[is.na(healthy_prev)] <- 0
+#87 species
+
+#combine abundance and prevalence filtered datasets
+#90 species
+healthy_filt <- unique(rbind(healthy_prev, top_abundant_h))
+
+healthy_t <- data.frame(t(healthy_filt))
+
+#make new relative abundance table to again obtain 100%
+healthy_t <- make_relative(as.matrix(healthy_t))
+healthy_t <- data.frame(healthy_t)
+
+healthy <- data.frame(t(healthy_t))
+healthy <- healthy[order(rowSums(healthy), decreasing = TRUE),]
+
+healthy_t <- data.frame(t(healthy))
+
+##calculate healthy cumulative dataset
+healthyCumulative <- data.frame(rowMeans(healthy))
+colnames(healthyCumulative) <- c("healthy")
+
+```
+
+
+#make relative abundance table with healthy included
+```{r}
+#combine BE and cumulative healthy
+
+BE_healthyCumulative <- merge(healthyCumulative, BE, all = TRUE, by = 0)
+rownames(BE_healthyCumulative) <- BE_healthyCumulative$Row.names
+BE_healthyCumulative$Row.names <- NULL
+BE_healthyCumulative[is.na(BE_healthyCumulative)] <- 0
+
+BE_healthyCumulative <- BE_healthyCumulative[order(rowSums(BE_healthyCumulative), 
+                                                   decreasing = TRUE),]
+BE_healthyCumulative_t <- data.frame(t(BE_healthyCumulative))
+
+metadata_BE_healthyCumulative <- metadata_single
+metadata_BE_healthyCumulative <- metadata_BE_healthyCumulative[,c(1,2,3,6,8,9)]
+
+#add healthy (mean age 35 years)
+metadata_BE_healthyCumulative[nrow(metadata_BE_healthyCumulative) + 1,] <- 
+  c("healthy", "healthy", "healthy", "healthy", "healthy", 35)
+
+rownames(metadata_BE_healthyCumulative) <- metadata_BE_healthyCumulative$Lab_ID
+metadata_BE_healthyCumulative$state <- c(rep("Bronchiectasis", 101),
+                                         "Healthy")
+
+#combine BE and all healthy samples
+BE_healthy <- merge(healthy, BE, all = TRUE, by = 0)
+rownames(BE_healthy) <- BE_healthy$Row.names
+BE_healthy$Row.names <- NULL
+BE_healthy[is.na(BE_healthy)] <- 0
+
+BE_healthy <- BE_healthy[order(rowSums(BE_healthy), decreasing = TRUE),]
+BE_healthy_t <- data.frame(t(BE_healthy))
+
+#make small metadata tables
+mBE <- metadata_single
+mBE00 <- mBE[,c(1,8,9,18)]  
+colnames(mBE00) <- c("sample", "gender", "age", "BMI")  
+
+mHealthy <- metadata_healthy
+mHealthy00 <- mHealthy[,c(1,3,4,7)]
+colnames(mHealthy00) <- c("sample", "gender", "age", "BMI")
+mHealthy00$gender <- with(mHealthy00,
+                          ifelse(gender == "m", "male",
+                          ifelse(gender == "f", "female", NA)))
+
+metadata_BE_healthy <- rbind(mBE00, mHealthy00)
+metadata_BE_healthy$state <- c(rep("Bronchiectasis", 101),
+                               rep("Healthy", 88))
+
+#export tables for MaAsLin2 analysis
+write.csv(BE_healthy, file = "BE_healthy_R.csv", row.names = TRUE)
+write.csv(metadata_BE_healthy, file = "metadata_BE_healthy_R.csv", row.names = TRUE,
+            col.names = TRUE)
+
+```
+
+#include healthy smokers
+```{r}
+RPMM_healthySmokers <- read_delim("RPMM_healthysmokers.csv", 
+    delim = ";", escape_double = FALSE, trim_ws = TRUE)
+
+RPMM_healthySmokers <- data.frame(RPMM_healthySmokers)
+rownames(RPMM_healthySmokers) <- RPMM_healthySmokers$species
+RPMM_healthySmokers$species <- NULL
+
+#filter dataset like it BE and healthy datasets
+#####make relative abundance table
+RPMM_healthySmokers_t <- data.frame(t(RPMM_healthySmokers))
+
+smokers_rel_t <- make_relative(as.matrix(RPMM_healthySmokers_t))
+smokers_rel_t <- data.frame(smokers_rel_t)
+
+smokers_rel <- data.frame(t(smokers_rel_t))
+
+#abundance filtering: exclude every species where every column has a threshold below 1%
+#abundance > 1% in at least one sample
+top_abundant_s <- smokers_rel[!apply(smokers_rel<0.01, 1, all, na.rm=TRUE),]
+#33 species
+
+#prevalence filtering: species must appear in 10% of all samples
+prev_filt_abund = 90
+
+smokers_prev <- smokers_rel
+
+n_prev = round(length(colnames(smokers_prev)) * prev_filt_abund / 100)
+smokers_prev[smokers_prev == 0] <- NA
+smokers_prev <- smokers_prev[rowSums(is.na(smokers_prev)) < n_prev, ]
+smokers_prev[is.na(smokers_prev)] <- 0
+#87 species
+
+#combine abundance and prevalence filtered datasets
+#88 species
+smokers_filt <- unique(rbind(top_abundant_s, smokers_prev))
+
+smokers_t <- data.frame(t(smokers_filt))
+
+#make new relative abundance table to again obtain 100%
+smokers_t <- make_relative(as.matrix(smokers_t))
+smokers_t <- data.frame(smokers_t)
+
+smokers <- data.frame(t(smokers_t))
+smokers <- smokers[order(rowSums(smokers), decreasing = TRUE),]
+
+smokers_t <- data.frame(t(smokers))
+
+```
+
+#combine BE, healthy and smoker filtered datasets
+```{r}
+
+#merge data sets
+BE_healthy_hSmokers <- merge(BE_healthy, smokers, all = TRUE, by = 0)
+rownames(BE_healthy_hSmokers) <- BE_healthy_hSmokers$Row.names
+BE_healthy_hSmokers$Row.names <- NULL
+BE_healthy_hSmokers[is.na(BE_healthy_hSmokers)] <- 0
+
+BE_healthy_hSmokers <- BE_healthy_hSmokers[order(rowSums(BE_healthy_hSmokers), decreasing = TRUE),]
+BE_healthy_hSmokers_t <- data.frame(t(BE_healthy_hSmokers))
+
+#make BE, healthy cumulative and all smoker dataset
+BE_healthyCumulative_smokers <- merge(BE_healthyCumulative, smokers, all = TRUE, by = 0)
+rownames(BE_healthyCumulative_smokers) <- BE_healthyCumulative_smokers$Row.names
+BE_healthyCumulative_smokers$Row.names <- NULL
+BE_healthyCumulative_smokers[is.na(BE_healthyCumulative_smokers)] <- 0
+
+BE_healthyCumulative_smokers <- BE_healthyCumulative_smokers[order(rowSums(
+  BE_healthyCumulative_smokers), decreasing = TRUE),]
+
+BE_healthyCumulative_smokers_t <- data.frame(t(BE_healthyCumulative_smokers))
+
+#basic metadata BE, healthy all and healthy smoker
+mSmo <- data.frame(sample = c("EGLA00101", "EGLA017", "EGLA018", "EGLA022", "EGLA048", 
+                                    "EGLA052", "EGLA055", "EGLA058"),
+                   state = c(rep("Healthy smoker", 8)))
+rownames(mSmo) <- mSmo$sample
+
+metadata_BE_healthyall_hSmokers <- rbind(metadata_BE_healthy[,c(1,5)], mSmo)
+
+#basic metadata BE, healthy cumulative and healthy smoker
+metadata_BE_healthyCum_hSmokers <- metadata_BE_healthyCumulative
+metadata_BE_healthyCum_hSmokers <- metadata_BE_healthyCum_hSmokers[, -c(5,6)]
+
+metadata_BE_healthyCum_hSmokers[nrow(metadata_BE_healthyCum_hSmokers) + 1, ] <-
+  c("EGLA00101", "smoker", "smoker", "smoker", "Healthy smoker")
+metadata_BE_healthyCum_hSmokers[nrow(metadata_BE_healthyCum_hSmokers) + 1, ] <-
+  c("EGLA017", "smoker", "smoker", "smoker", "Healthy smoker")
+metadata_BE_healthyCum_hSmokers[nrow(metadata_BE_healthyCum_hSmokers) + 1, ] <-
+  c("EGLA018", "smoker", "smoker", "smoker", "Healthy smoker")
+metadata_BE_healthyCum_hSmokers[nrow(metadata_BE_healthyCum_hSmokers) + 1, ] <-
+  c("EGLA022", "smoker", "smoker", "smoker", "Healthy smoker")
+metadata_BE_healthyCum_hSmokers[nrow(metadata_BE_healthyCum_hSmokers) + 1, ] <-
+  c("EGLA048", "smoker", "smoker", "smoker", "Healthy smoker")
+metadata_BE_healthyCum_hSmokers[nrow(metadata_BE_healthyCum_hSmokers) + 1, ] <-
+  c("EGLA052", "smoker", "smoker", "smoker", "Healthy smoker")
+metadata_BE_healthyCum_hSmokers[nrow(metadata_BE_healthyCum_hSmokers) + 1, ] <-
+  c("EGLA055", "smoker", "smoker", "smoker", "Healthy smoker")
+metadata_BE_healthyCum_hSmokers[nrow(metadata_BE_healthyCum_hSmokers) + 1, ] <-
+  c("EGLA058", "smoker", "smoker", "smoker", "Healthy smoker")
+
+rownames(metadata_BE_healthyCum_hSmokers) <- metadata_BE_healthyCum_hSmokers$Lab_ID
+
+```
+
+
+#alpha diversity
+```{r}
+
+metadata_single$shannon <- diversity(BE_t, index = "shannon")
+metadata_single$simpson <- diversity(BE_t, index = "simpson")
+metadata_single$specNumber <- specnumber(BE_t)
+metadata_single$richness <- metadata_single$specNumber / sqrt(length(metadata_single$specNumber))
+metadata_single$evenness <- metadata_single$shannon / log(metadata_single$specNumber)
+
+
+metadata_single %>% 
+  kruskal_test(shannon ~ BSI)
+#p=0.002
+metadata_single %>%
+  kruskal_effsize(shannon ~ BSI, ci = TRUE)
+
+metadata_single %>% 
+  dunn_test(shannon ~ BSI, p.adjust.method = "BH")
+
+
+
+metadata_single %>% 
+  kruskal_test(simpson ~ BSI)
+#p=0.008
+metadata_single %>%
+  kruskal_effsize(simpson ~ BSI, ci = TRUE)
+
+metadata_single %>% 
+  kruskal_test(specNumber ~ BSI)
+#p=0.005
+metadata_single %>%
+  kruskal_effsize(specNumber ~ BSI, ci = TRUE)
+
+metadata_single %>% 
+  kruskal_test(evenness ~ BSI)
+#p=0.02
+metadata_single %>%
+  kruskal_effsize(evenness ~ BSI, ci = TRUE)
+
+#stat.test1 <- compare_means(data = metadata_single, shannon ~ BSI,
+                            #method = "wilcox.test")
+stat.test1 <- metadata_single %>%
+  dunn_test(shannon ~ BSI, p.adjust.method = "BH") %>%
+  add_xy_position(x = "BSI")
+
+stat.test1
+
+ggplot(metadata_single, aes(x = BSI, y = shannon)) +
+  geom_violin(width = 0.5) +
+  geom_point() +
+  theme_pubr() +
+  xlab("Bronchiectasis Severity Index") + ylab("Shannon diversity") +
+  #stat_compare_means(method = "kruskal.test", label.x.npc = "left") +
+  stat_pvalue_manual(stat.test1, label = "p.adj.signif",
+                     tip.length = 0.01) +
+  geom_pointrange(mapping = aes(x = BSI, y = shannon),
+                  stat = "summary",
+                  fun.min = function(z) {quantile(z,0.25)},
+                  fun.max = function(z) {quantile(z,0.75)},
+                  fun = median,
+                  colour = "red", size = 0.3)
+
+ggplot(metadata_single, aes(x = BSI, y = shannon)) +
+  geom_violin(aes(fill = BSI, fill = after_scale(colorspace::lighten(fill, 0.5)))) +
+  geom_boxplot(fill = "white", width = 0.2, outlier.shape = NA, coef = 0) +
+  geom_point(aes(color = BSI), position = position_jitter(width = 0.03, seed = 0),
+             alpha = 0.5) +
+  geom_point(color = "black", position = position_jitter(width = 0.03, seed = 0),
+             stroke = 0.7, shape = 1) +
+  scale_fill_manual(values = c("mild" = "#FED98E",
+                               "moderate" = "#FE9929",
+                               "severe" = "#CC4C02")) +
+  scale_color_manual(values = c("mild" = "#FED98E",
+                                "moderate" = "#FE9929", 
+                                "severe" = "#CC4C02")) +
+  stat_pvalue_manual(stat.test1, label = "p.adj.signif", tip.length = 0.01, hide.ns = TRUE) +
+  theme_pubr(border = TRUE, legend = "none") +
+  labs(x = "Bronchiectasis Severity Index", y = "Shannon diversity")
+
+
+stat.test2 <- metadata_single %>%
+  dunn_test(simpson ~ BSI, p.adjust.method = "BH") %>%
+  add_xy_position(x = "BSI")
+
+stat.test2
+
+ggplot(metadata_single, aes(x = BSI, y = simpson)) +
+  geom_violin(aes(fill = BSI, fill = after_scale(colorspace::lighten(fill, 0.5)))) +
+  geom_boxplot(fill = "white", width = 0.12, outlier.shape = NA, coef = 0) +
+  geom_point(aes(color = BSI), position = position_jitter(width = 0.03, seed = 0),
+             alpha = 0.5) +
+  geom_point(color = "black", position = position_jitter(width = 0.03, seed = 0),
+             stroke = 0.7, shape = 1) +
+  scale_fill_manual(values = c("mild" = "#FED98E",
+                               "moderate" = "#FE9929",
+                               "severe" = "#CC4C02")) +
+  scale_color_manual(values = c("mild" = "#FED98E",
+                                "moderate" = "#FE9929", 
+                                "severe" = "#CC4C02")) +
+  stat_pvalue_manual(stat.test2, label = "p.adj.signif", tip.length = 0.01, hide.ns = TRUE,
+                     y.position = c(1, 1.05)) +
+  theme_pubr(border = TRUE, legend = "none") +
+  labs(x = "Bronchiectasis Severity Index", y = "Simpson diversity index")
+
+
+stat.test3 <- metadata_single %>%
+  dunn_test(specNumber ~ BSI, p.adjust.method = "BH") %>%
+  add_xy_position(x = "BSI")
+
+stat.test3
+
+ggplot(metadata_single, aes(x = BSI, y = specNumber)) +
+  geom_violin(aes(fill = BSI, fill = after_scale(colorspace::lighten(fill, 0.5)))) +
+  geom_boxplot(fill = "white", width = 0.3, outlier.shape = NA, coef = 0) +
+  geom_point(aes(color = BSI), position = position_jitter(width = 0.03, seed = 0),
+             alpha = 0.5) +
+  geom_point(color = "black", position = position_jitter(width = 0.03, seed = 0),
+             stroke = 0.7, shape = 1) +
+  scale_fill_manual(values = c("mild" = "#FED98E",
+                               "moderate" = "#FE9929",
+                               "severe" = "#CC4C02")) +
+  scale_color_manual(values = c("mild" = "#FED98E",
+                                "moderate" = "#FE9929", 
+                                "severe" = "#CC4C02")) +
+  stat_pvalue_manual(stat.test3, label = "p.adj.signif", tip.length = 0.01, hide.ns = TRUE,
+                     y.position = c(61,64)) +
+  theme_pubr(border = TRUE, legend = "none") +
+  labs(x = "Bronchiectasis Severity Index", y = "Species number")
+
+
+stat.test4 <- metadata_single %>%
+  dunn_test(evenness ~ BSI, p.adjust.method = "BH") %>%
+  add_xy_position(x = "BSI")
+
+stat.test4
+
+ggplot(metadata_single, aes(x = BSI, y = evenness)) +
+  geom_violin(aes(fill = BSI, fill = after_scale(colorspace::lighten(fill, 0.5)))) +
+  geom_boxplot(fill = "white", width = 0.2, outlier.shape = NA, coef = 0) +
+  geom_point(aes(color = BSI), position = position_jitter(width = 0.03, seed = 0),
+             alpha = 0.5) +
+  geom_point(color = "black", position = position_jitter(width = 0.03, seed = 0),
+             stroke = 0.7, shape = 1) +
+  scale_fill_manual(values = c("mild" = "#FED98E",
+                               "moderate" = "#FE9929",
+                               "severe" = "#CC4C02")) +
+  scale_color_manual(values = c("mild" = "#FED98E",
+                                "moderate" = "#FE9929", 
+                                "severe" = "#CC4C02")) +
+  scale_y_continuous(limits = c(0,1)) +
+  stat_pvalue_manual(stat.test4, label = "p.adj.signif", tip.length = 0.01, hide.ns = TRUE,
+                     y.position = c(0.93, 0.98)) +
+  theme_pubr(border = TRUE, legend = "none") +
+  labs(x = "Bronchiectasis Severity Index", y = "Pielou's evenness index")
+
+#test metadata in commensal/Haemophilus/Pseudomonas groups
+
+metadata_HI <- subset(metadata_single, metadata_single$group00 == "Haemophilus")
+
+metadata_HI %>% 
+  kruskal_test(shannon ~ BSI)
+#p=0.01
+metadata_HI %>%
+  dunn_test(shannon ~ BSI, p.adjust.method = "BH")
+
+metadata_HI %>%
+  kruskal_effsize(shannon ~ BSI, ci = TRUE)
+
+#make figure
+metadata_single$groupAlpha <- with(metadata_single,
+                                    ifelse(group00 == "Pseudomonas", "Pseudomonas",
+                                    ifelse(group00 == "Haemophilus", "Haemophilus",
+                                    ifelse(group00 == "commensals", "commensals", 
+                                           "rare pathogens"))))
+
+subset(metadata_single, groupAlpha == "Haemophilus") %>% 
+  kruskal_test(shannon ~ BSI)
+subset(metadata_single, groupAlpha == "Haemophilus") %>% 
+  kruskal_effsize(shannon ~ BSI, ci = TRUE)
+
+
+subset(metadata_single, groupAlpha == "Pseudomonas") %>% 
+  kruskal_test(shannon ~ BSI)
+
+subset(metadata_single, groupAlpha == "commensals") %>% 
+  kruskal_test(shannon ~ BSI)
+subset(metadata_single, groupAlpha == "commensals") %>% 
+  kruskal_effsize(shannon ~ BSI, ci = TRUE)
+
+subset(metadata_single, groupAlpha == "rare pathogens") %>% 
+  kruskal_test(shannon ~ BSI)
+subset(metadata_single, groupAlpha == "rare pathogens") %>% 
+  kruskal_effsize(shannon ~ BSI, ci = TRUE)
+
+ggplot(metadata_single, aes(x = BSI, y = shannon)) +
+  geom_boxplot(width = 0.5) +
+  geom_point() +
+  facet_grid( ~ groupAlpha) +
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, hide.ns = TRUE) +
+  ylab("Shannon diversity") + xlab("Bronchiectasis Severity Index") +
+  theme_pubr(border = TRUE)
+
+
+
+```
+
+#pie chart with pathogen distribution
+```{r}
+metadata_single$pieChart <- with(metadata_single,
+                          ifelse(group == "commensals", "Commensals",
+                          ifelse(group == "PA", "Pseudomonas",
+                          ifelse(group == "HI", "Haemophilus",
+                          ifelse(group == "Candida", "Candida",
+                          ifelse(group == "HI_MC", "Haemophilus",
+                          ifelse(group == "PA_SA", "Pseudomonas",
+                          ifelse(group == "SA", "Staphylococcus",
+                          ifelse(group == "P_other", "Pseudomonas",
+                          ifelse(group == "MC", "Moraxella",
+                          ifelse(group == "Herpesvirus", "Herpesvirus",
+                          ifelse(group == "SM", "Stenotrophomonas",
+                          ifelse(group == "NM", "Neisseria",
+                          ifelse(group == "SL", "Serratia",
+                          ifelse(group == "other", "Enterococcus", 
+                          ifelse(group == "EF", "Enterococcus", NA))))))))))))))))
+
+table(metadata_single$group)
+
+ggplot(metadata_single, aes(x = "", y = pieChart, fill = pieChart)) +
+  geom_bar(stat = "identity") +
+  coord_polar("y", start = 0) +
+  scale_fill_manual(values = c("Commensals" = "lightskyblue",
+                               "Candida" = "firebrick2",
+                               "Herpesvirus" = "orange",
+                               "Haemophilus" = "gold",
+                               "Moraxella" = "goldenrod4",
+                               "Neisseria" = "palevioletred",
+                               "Pseudomonas" = "darkgreen",
+                               "Serratia" = "yellowgreen",
+                               "Staphylococcus" = "mediumblue",
+                               "Stenotrophomonas" = "seagreen")) +
+  theme_void()
+
+#get frequencies
+major_pathogens <- as.data.frame(table(metadata_single$pieChart))
+sum_freq <- sum(major_pathogens$Freq)
+major_pathogens$frequency <- round((major_pathogens$Freq / sum_freq) * 100)
+
+df2 <- major_pathogens %>%
+  mutate(csum = rev(cumsum(rev(Freq))),
+         pos = Freq/2 + lead(csum, 1),
+         pos = if_else(is.na(pos), Freq/2, pos))
+
+ggplot(df2, aes(x = "", y = Freq, fill = Var1)) +
+  geom_col(width = 1, color = "white") +
+  coord_polar(theta = "y") +
+  geom_label_repel(data = df2,
+                   aes(y = pos, label = paste0(Freq, "%")),
+                   size = 4.5, nudge_x = 1, show.legend = FALSE) +
+  scale_fill_manual(values = c("Commensals" = "lightskyblue",
+                               "Candida" = "firebrick2",
+                               "Herpesvirus" = "orange",
+                               "Haemophilus" = "gold",
+                               "Moraxella" = "goldenrod4",
+                               "Neisseria" = "palevioletred",
+                               "Pseudomonas" = "darkgreen",
+                               "Serratia" = "yellowgreen",
+                               "Staphylococcus" = "royalblue4",
+                               "Stenotrophomonas" = "seagreen")) +
+  guides(fill = guide_legend(title = "Group")) +
+  theme_void()
+
+#treemap
+mycolors = c("#EE2C2C", "#87CEFA", "#CD661D", "#FFD700", "#FFA500",  "#8B6914", "#DB7093", "#006400",
+             "#9ACD32", "#27408B", "#2E8B57")
+
+col2hex("lightskyblue")
+col2hex("firebrick2")
+col2hex("orange")
+col2hex("gold")
+col2hex("goldenrod4")
+col2hex("palevioletred")
+col2hex("darkgreen")
+col2hex("yellowgreen")
+#col2hex("mediumblue")
+col2hex("royalblue4")
+col2hex("seagreen")
+col2hex("chocolate3")
+
+df2$mycolors <- mycolors
+df2$percent <- c("7%", "38%", "2%", "27%", "1%", "1%", "1%", "15%", "1%", "5%", "3%")
+
+treemap(df2,
+        index = c("Var1", "percent"),
+        vSize = "frequency",
+        type = "color",
+        vColor = "mycolors",
+        fontsize.labels = c(11,10),
+        fontcolor.labels = c("black", "black"),
+        align.labels = list(
+          c("center", "center"),
+          c("right", "bottom")
+        ),
+        border.lwds = c(1, 1),
+        inflate.labels = FALSE,
+        title = "")
+
+```
+
+
+#beta diversity
+```{r}
+
+#NMDS
+
+set.seed(2)
+
+mds <- metaMDS(BE_t, distance = "bray", k = 3, autotransform = TRUE, trymax = 100 )
+#stress=0.15
+
+stressplot(mds)
+
+data.scores <- as.data.frame(scores(mds)$sites)
+
+metadata_single <- metadata_single[order(rownames(metadata_single)),]
+
+data.scores$gender <- metadata_single$sex
+data.scores$group <- metadata_single$group
+data.scores$group00 <- metadata_single$group00
+data.scores$BSI <- metadata_single$BSI
+data.scores$FEV1_group <- metadata_single$FEV1_group
+data.scores$MRC_group <- metadata_single$mrc_group
+data.scores$exacerbation_group <- metadata_single$exacerbation_group
+data.scores$hospital_group <- metadata_single$hospital_group
+data.scores$age_group <- metadata_single$age_group
+data.scores$pieChart <- metadata_single$pieChart
+data.scores$shannon <- diversity(BE_t, index = "shannon")
+data.scores$aetiology <- metadata_single$aetiology
+
+envit_metadata <- data.scores
+envit_metadata$NMDS1 <- NULL
+envit_metadata$NMDS2 <- NULL
+envit_metadata$NMDS3 <- NULL
+
+envit_metadata <- data.frame(cbind(envit_metadata, BE_t))
+
+data.envit <- envfit(mds, envit_metadata, permutation = 999, 
+                             na.rm = TRUE)
+data.envit
+
+
+p1 <- ggplot(data.scores, aes(x = NMDS1, y = NMDS2, color = group00)) +
+  geom_point(size = 2) +
+  #stat_ellipse(geom = "polygon", alpha = 0.1) +
+  scale_color_manual(values = c("commensals" = "lightskyblue",
+                               "Candida" = "firebrick2",
+                               #"Herpesvirus" = "orange",
+                               "Herpesvirus" = "plum",
+                               #"Haemophilus" = "gold",
+                               "Haemophilus" = "gold3",
+                               "Moraxella" = "goldenrod4",
+                               #"Neisseria" = "palevioletred",
+                               "Neisseria" = "maroon4",
+                               "Pseudomonas" = "darkgreen",
+                               "Serratia" = "yellowgreen",
+                               "Staphylococcus" = "royalblue4",
+                               #"Stenotrophomonas" = "seagreen",
+                               "Stenotrophomonas" = "seagreen3",
+                               "Enterococcus" = "chocolate3"),
+                     name = "Group") +
+  theme_pubr(border = TRUE, legend = "right") 
+
+p1
+
+#######
+##add density plot
+
+xdens <- 
+  axis_canvas(p1, axis = "x") +
+  geom_density(data = subset(data.scores, group00 == c("commensals", "Haemophilus", "Pseudomonas")), 
+               aes(x = NMDS1, fill = group00), alpha = 0.6) +
+  scale_fill_manual(values = c("commensals" = "lightskyblue",
+                               "Haemophilus" = "gold",
+                               "Pseudomonas" = "darkgreen"))
+
+ydens <- 
+  axis_canvas(p1, axis = "y", coord_flip = TRUE) +
+  geom_density(data = subset(data.scores, group00 == c("commensals", "Haemophilus", "Pseudomonas")), 
+               aes(x = NMDS2, fill = group00), alpha = 0.6) +
+  scale_fill_manual(values = c("commensals" = "lightskyblue",
+                               "Haemophilus" = "gold",
+                               "Pseudomonas" = "darkgreen")) +
+  coord_flip()
+
+p1 %>%
+  insert_xaxis_grob(xdens, grid::unit(1, "in"), position = "top") %>%
+  insert_yaxis_grob(ydens, grid::unit(1, "in"), position = "right") %>%
+  ggdraw()
+
+
+###
+#colour points based on various parameters
+ggplot(data.scores, aes(x = NMDS1, y = NMDS2, color = BSI)) +
+  geom_point(size = 2) +
+  #stat_ellipse(geom = "polygon", alpha = 0.1) +
+  scale_color_manual(values = c("#FED98E", "#FE9929", "#CC4C02"),
+                     name = "Bronchiectasis\nSeverity Index") +
+  theme_pubr(border = TRUE, legend = "right") 
+
+
+ggplot(data.scores, aes(x = NMDS1, y = NMDS2, color = shannon)) +
+  geom_point(size = 2) +
+  scale_color_gradientn(colors = c("#BDC9E1", "#74A9CF", "#0570B0"),
+                        name = "Shannon diversity") +
+  theme_pubr(border = TRUE, legend = "right")
+
+#calculate distances from each point to group centroid
+vegdist_object <- vegdist(BE_t, method="bray", binary=FALSE)
+
+group_vector <- factor(metadata_single$BSI)
+
+betadisper_result <-
+  betadisper(vegdist_object, group_vector, 
+             type = c("centroid"), 
+             bias.adjust = FALSE, sqrt.dist = FALSE, add = FALSE)
+
+betadisper_df_distances <- 
+  data.frame(value=betadisper_result$distances,
+             group=group_vector)
+
+stat.test <- betadisper_df_distances %>%
+  wilcox_test(value ~ group) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance("p")
+stat.test <- stat.test %>%
+  add_xy_position(x = "group", fun = "max")
+stat.test
+
+betadisper_df_distances %>%
+  kruskal_test(value ~ group)
+
+betadisper_df_distances %>%
+  kruskal_effsize(value ~ group, ci = TRUE)
+
+ggplot(betadisper_df_distances, aes(x=group, y=value)) +
+  geom_boxplot(width = 0.5, aes(fill = group)) +
+  geom_point() +
+  theme_pubr(border = TRUE) +
+  scale_fill_manual(values = c("#FED98E", "#FE9929", "#CC4C02"),
+                     name = "Bronchiectasis Severity Index") +
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", hide.ns = TRUE,
+                     step.increase = 0.05, tip.length = 0.01) +
+  ylab("Distance to centroid") +
+  xlab("Bronchiectasis Severity Index") +
+  theme(legend.position = "none")
+
+
+#repeat clustering with cumulative healthy included
+
+#NMDS
+
+set.seed(2)
+
+metadata_BE_healthyCumulative <- metadata_BE_healthyCumulative[order(rownames(
+  metadata_BE_healthyCumulative)),]
+BE_healthyCumulative_t <- BE_healthyCumulative_t[order(rownames(BE_healthyCumulative_t)),]
+
+
+mds_healthyCumulative <- metaMDS(BE_healthyCumulative_t, distance = "bray", k = 3, 
+                                 autotransform = TRUE, trymax = 100 )
+#stress=0.15
+
+stressplot(mds_healthyCumulative)
+
+data.scores_healthyCumulative <- as.data.frame(scores(mds_healthyCumulative)$sites)
+
+
+
+data.scores_healthyCumulative$age <- metadata_BE_healthyCumulative$age
+data.scores_healthyCumulative$group <- metadata_BE_healthyCumulative$group00
+data.scores_healthyCumulative$shannon <- diversity(BE_healthyCumulative_t, index = "shannon")
+
+envit_metadata_healthyCumulative <- data.scores_healthyCumulative
+envit_metadata_healthyCumulative$NMDS1 <- NULL
+envit_metadata_healthyCumulative$NMDS2 <- NULL
+envit_metadata_healthyCumulative$NMDS3 <- NULL
+
+envit_metadata_healthyCumulative <- data.frame(cbind(envit_metadata_healthyCumulative, 
+                                                     BE_healthyCumulative_t))
+
+data.envit_healthyCumulative <- envfit(mds_healthyCumulative, envit_metadata_healthyCumulative,
+                                       permutation = 999, na.rm = TRUE)
+data.envit_healthyCumulative
+
+data.scores_healthyCumulative$overall <- c(rep("BE", 101), "healthy")
+
+data.scores_healthyCumulative$NMDS2 <- data.scores_healthyCumulative$NMDS2 * -1
+
+p2 <- ggplot(data.scores_healthyCumulative, aes(x = NMDS1, y = NMDS2, color = group, 
+                                          shape = overall)) +
+  geom_point(aes(size = overall)) +
+  #stat_ellipse(geom = "polygon", alpha = 0.1) +
+  scale_color_manual(values = c("commensals" = "lightskyblue",
+                               "Candida" = "firebrick2",
+                               #"Herpesvirus" = "orange",
+                               "Herpesvirus" = "plum",
+                               #"Haemophilus" = "gold",
+                               "Haemophilus" = "gold3",
+                               "Moraxella" = "goldenrod4",
+                               #"Neisseria" = "palevioletred",
+                               "Neisseria" = "maroon4",
+                               "Pseudomonas" = "darkgreen",
+                               "Serratia" = "yellowgreen",
+                               "Staphylococcus" = "royalblue4",
+                               #"Stenotrophomonas" = "seagreen",
+                               "Stenotrophomonas" = "seagreen3",
+                               "Enterococcus" = "chocolate3",
+                               "healthy" = "turquoise"),
+                     breaks = c("healthy", "Candida", "Herpesvirus", "commensals",
+                                "Enterococcus", 
+                                "Haemophilus", "Moraxella", "Neisseria", "Pseudomonas",
+                                "Serratia",
+                                "Staphylococcus", "Stenotrophomonas"),
+                     labels = c("Lung health", "Candida", "Herpesvirus", "Commensals", 
+                                "Enterococcus", "Haemophilus", "Moraxella", "Neisseria",
+                                "Pseudomonas", "Serratia", "Staphylococcus",
+                                "Stenotrophomonas"),
+                     name = "Group") +
+  scale_size_manual(values = c(2, 3)) +
+  theme_pubr(border = TRUE, legend = "right") +
+  guides(shape = "none", size = "none")
+
+p2
+
+xdens_p2 <- 
+  axis_canvas(p2, axis = "x") +
+  geom_density(data = subset(data.scores_healthyCumulative, 
+                             group == c("commensals", "Haemophilus", "Pseudomonas")), 
+               aes(x = NMDS1, fill = group), alpha = 0.6) +
+  scale_fill_manual(values = c("commensals" = "lightskyblue",
+                               "Haemophilus" = "gold3",
+                               "Pseudomonas" = "darkgreen"))
+
+ydens_p2 <- 
+  axis_canvas(p2, axis = "y", coord_flip = TRUE) +
+  geom_density(data = subset(data.scores_healthyCumulative, 
+                             group == c("commensals", "Haemophilus", "Pseudomonas")), 
+               aes(x = NMDS2, fill = group), alpha = 0.6) +
+  scale_fill_manual(values = c("commensals" = "lightskyblue",
+                               "Haemophilus" = "gold3",
+                               "Pseudomonas" = "darkgreen")) +
+  coord_flip()
+
+p2 %>%
+  insert_xaxis_grob(xdens_p2, grid::unit(1, "in"), position = "top") %>%
+  insert_yaxis_grob(ydens_p2, grid::unit(1, "in"), position = "right") %>%
+  ggdraw()
+
+#repeat clustering with all healthy and all healthy smokers included
+
+#NMDS
+
+set.seed(2)
+
+metadata_BE_healthyall_hSmokers <- metadata_BE_healthyall_hSmokers[order(rownames(
+  metadata_BE_healthyall_hSmokers)),]
+BE_healthy_hSmokers_t <- BE_healthy_hSmokers_t[order(rownames(BE_healthy_hSmokers_t)),]
+
+
+mds_healthyall_smoker <- metaMDS(BE_healthy_hSmokers_t, distance = "bray", k = 3, 
+                                 autotransform = TRUE, trymax = 100 )
+#stress=0.14
+
+stressplot(mds_healthyall_smoker)
+
+data.scores_healthyall_smoker <- as.data.frame(scores(mds_healthyall_smoker)$sites)
+
+
+
+data.scores_healthyall_smoker$state <- metadata_BE_healthyall_hSmokers$state
+data.scores_healthyall_smoker$sample <- rownames(data.scores_healthyall_smoker)
+
+envit_metadata_healthyall_smoker <- data.scores_healthyall_smoker
+envit_metadata_healthyall_smoker$NMDS1 <- NULL
+envit_metadata_healthyall_smoker$NMDS2 <- NULL
+envit_metadata_healthyall_smoker$NMDS3 <- NULL
+
+envit_metadata_healthyall_smoker <- data.frame(cbind(envit_metadata_healthyall_smoker, 
+                                                     BE_healthy_hSmokers_t))
+
+data.envit_healthyall_smoker <- envfit(mds_healthyall_smoker, envit_metadata_healthyall_smoker,
+                                       permutation = 999, na.rm = TRUE)
+data.envit_healthyall_smoker
+
+
+ggplot(data.scores_healthyall_smoker, aes(x = NMDS1, y = NMDS2, color = state, 
+                                          shape = state)) +
+  scale_x_continuous(limits = c(-2.4, 1.8)) +
+  scale_color_discrete(labels = c("Bronchiectasis", "Healthy non-smoker", "Healthy smoker")) +
+  scale_shape_discrete(labels = c("Bronchiectasis", "Healthy non-smoker", "Healthy smoker")) +
+  geom_point(size = 3) +
+  #geom_text_repel(aes(label = sample), size = 2) +
+  stat_ellipse(geom = "polygon", alpha = 0.1, aes(fill = state)) +
+  theme_pubr(border = TRUE, legend = "none") 
+
+#draw vectors for most significant species
+scores_env <- as.data.frame(scores(data.envit_healthyall_smoker, display = "vectors"))
+scores_env <- cbind(scores_env, factor = rownames(scores_env))
+scores_env$r <- data.envit_healthyall_smoker[["vectors"]][["r"]]
+scores_env$p <- data.envit_healthyall_smoker[["vectors"]][["pvals"]]
+
+scores_signif <- subset(scores_env, p == 0.001)
+
+#scores_signif <- scores_signif[]
+
+#shorten species name
+scores_signif$species <- c("S. parasanguinis", "R. mucilaginosa", "H. influenzae", 
+                           "P. melaninogenica", "S. salivarius", "V. atypica", "P. aeruginosa",
+                           "N. subflava", "G. sanguinis", "V. dispar",
+                           "P. jejuni", "S. odontolytica", "H. parainfluenzae", "E. sulci",
+                           "F. periodonticum", "S. thermophilus",
+                           "A. parvulum", "N. mucosa",
+                           "L. mirabilis", "L. buccalis", "A. meyeri", "C. concisus", 
+                           "L. oris")
+
+scores_signif00 <- subset(scores_signif, r > 0.1)
+scores_signif01 <- subset(scores_signif, r > 0.15)
+
+ggplot(data.scores_healthyall_smoker) +
+  geom_point(mapping = aes(x = NMDS1, y = NMDS2, color = state),
+             size = 3, alpha = 0.5) +
+  scale_x_continuous(limits = c(-2.4, 1.8)) +
+  coord_fixed() +
+  geom_segment(data = scores_signif01,
+               aes(x = 0, xend = NMDS1, y = 0, yend = NMDS2),
+               arrow = arrow(length = unit(0.25, "cm")), color = "grey") +
+  geom_text_repel(data = scores_signif01, aes(x = NMDS1, y = NMDS2, label = species),
+            size = 2.5, fontface = "italic") + 
+  theme_pubr(border = TRUE, legend = "none")
+
+options(ggrepel.max.overlaps = Inf)
+
+```
+
+
+
+#DMM clustering
+```{r}
+
+library(DirichletMultinomial)
+library(reshape2)
+
+#https://microbiome.github.io/tutorials/DMM.html
+
+#RPMM_BE_single_t
+kept_taxa <- names(BE_t)
+
+RPMM_BE_single_t_filt <- RPMM_BE_single_t[,kept_taxa]
+
+set.seed(2)
+
+dmn(as.matrix(RPMM_BE_single_t_filt), k = 6, verbose = FALSE, 
+    seed = runif(1, 0, .Machine$integer.max))
+
+all_dmns <- 6
+dmn_list <- numeric(all_dmns)
+
+
+for(i in 1:all_dmns){
+  print(i)
+  assign(paste0("dmn_", i), dmn(as.matrix(RPMM_BE_single_t_filt), i, verbose = FALSE))
+}
+
+dmn_list <- list(dmn_1, dmn_2, dmn_3, dmn_4, dmn_5, dmn_6)
+
+#save clusters / metacommunities
+Dirichlet_multinomial_1 <- mixture(dmn_list[[1]], assign = TRUE)
+Dirichlet_multinomial_2 <- mixture(dmn_list[[2]], assign = TRUE)
+Dirichlet_multinomial_3 <- mixture(dmn_list[[3]], assign = TRUE)
+Dirichlet_multinomial_4 <- mixture(dmn_list[[4]], assign = TRUE)
+Dirichlet_multinomial_5 <- mixture(dmn_list[[5]], assign = TRUE)
+Dirichlet_multinomial_6 <- mixture(dmn_list[[6]], assign = TRUE)
+
+Dirichlet_multinomial_all <- data.frame(cbind(Dirichlet_multinomial_1,
+                                              Dirichlet_multinomial_2, Dirichlet_multinomial_3,
+                                              Dirichlet_multinomial_4, Dirichlet_multinomial_5,
+                                              Dirichlet_multinomial_6))
+
+
+colnames(Dirichlet_multinomial_all) <- c("DMM_k=1", "DMM_k=2", "DMM_k=3", "DMM_k=4", "DMM_k=5",
+                                         "DMM_k=6")
+
+#minimum information criteria
+lplc <- sapply(dmn_list, laplace)
+aic <- sapply(dmn_list, AIC)
+bic <- sapply(dmn_list, BIC)
+
+dmn_list[[which.min(lplc)]] #4, optimal number of metacommunities (Laplace information criterion)
+dmn_list[[which.min(aic)]] #1, (Akaike information criterion)
+dmn_list[[which.min(bic)]] #1, (Bayesian information criterion)
+
+#plot information criterion
+plot(lplc, type = "b", xlab = "Number of Dirichlet Components", ylab = "Model Fit, Laplace")
+plot(aic, type = "b", xlab = "Number of Dirichlet Components", ylab = "Model Fit, AIC", lty = 2)
+plot(bic, type = "b", xlab = "Number of Dirichlet Components", ylab = "Model Fit, BIC", lty = 3)
+
+
+fit <- dmn_list
+best <- fit[[4]] 
+
+mixturewt(best)
+fitted(best, scale = TRUE)
+fitted(best)
+
+#want to get influence on the models from the different species
+cluster_imp <- fitted(best) #get cluster importance
+p1 <- fitted(fit[[1]], scale = TRUE) #comparison with model for one big cluster
+p5 <- fitted(best, scale = TRUE)
+
+meandiff <- colSums(abs(p5 - as.vector(p1)))
+meandiff
+
+x <- mixture(best)
+
+#plot the community types
+plot_list <- list()
+for (k in seq(ncol(fitted(best)))) {
+  d <- melt(fitted(best))
+  colnames(d) <- c("species", "cluster", "value")
+  d <- subset(d, cluster == k) %>%
+    #arrange OTUs by assingment strength
+    arrange(value) %>%
+    mutate(species = factor(species, levels = unique(species))) %>%
+    #only show the most important drivers
+    filter(abs(value) > quantile(abs(value), 0.8))
+  
+  p <- ggplot(d, aes(x = species, y = value)) +
+    geom_bar(stat = "identity") +
+    coord_flip() +
+    labs(title = paste("Top drivers: community type", k))
+  print(p)
+}
+
+
+
+for (k in seq(ncol(fitted(best)))) {
+  d <- melt(fitted(best))
+  d$Var1 <- gsub(x = d$Var1, pattern = "\\_", replacement = " ")
+  colnames(d) <- c("species", "cluster", "value")
+  d <- subset(d, cluster == k) %>%
+    #arrange species by assingment strength
+    arrange(value) %>%
+    mutate(species = factor(species, levels = unique(species))) %>%
+    #only show the most important drivers
+    filter(abs(value) > quantile(abs(value), 0.8))
+  gg_color_hue <- function(n) {
+    hues = seq(15, 375, length = n + 1)
+    hcl(h = hues, l = 65, c = 100)[1:n]
+  }
+  cols = brewer.pal(n = 4, name = "Set2")
+  #cols = brewer.pal(n = 4, name = "Dark2")
+  #cols = brewer.pal(n = 4, name = "Pastel2")
+  #cols = c("#8DD3C7", "#BEBADA", "#FB8072", "#80B1D3")
+  
+  p <- ggplot(d, 
+              aes(x = species, y = value)) +
+    geom_bar(stat = "identity", fill = cols[k], colour = "black") +
+    ylab("Cluster contribution") + xlab("") +
+    theme_pubr() +
+    theme(axis.text.y = element_text(face = "italic", size = 8)) +
+    coord_flip() +
+    labs(title = paste("Top drivers: community type", k))
+  
+  plot_list[[k]] = p
+}
+
+plot <- cowplot::plot_grid(plot_list[[1]], plot_list[[2]], plot_list[[3]], 
+                           plot_list[[4]],
+                           nrow = 2, align = "vh")
+plot
+
+#alpa diversity community types
+cluster_result <- as.data.frame(Dirichlet_multinomial_4)
+
+cluster_result$shannon <- metadata_single$shannon
+
+stat.test10 <- cluster_result %>%
+  dunn_test(shannon ~ Dirichlet_multinomial_4, p.adjust.method = "BH") %>%
+  add_xy_position(x = "Dirichlet_multinomial_4")
+
+stat.test10
+
+cluster_result %>%
+  kruskal_test(shannon ~ Dirichlet_multinomial_4)
+
+cluster_result %>%
+  kruskal_effsize(shannon ~ Dirichlet_multinomial_4, ci = TRUE)
+
+
+ggplot(cluster_result, aes(x = as.factor(Dirichlet_multinomial_4), y = shannon)) +
+  geom_boxplot(width = 0.5
+               , fill = cols
+               ) +
+  geom_point(alpha = 0.6) +
+  stat_pvalue_manual(stat.test10, label = "p.adj.signif", tip.length = 0.01, hide.ns = TRUE) +
+  xlab("DMM Cluster") + ylab("Shannon diversity") +
+  theme_pubr(border = TRUE)
+
+
+#use previously calculated NMDS to visualize clusters
+data.scores$DMMcluster <- cluster_result$Dirichlet_multinomial_4
+
+#cols = c("#8DD3C7", "#BEBADA", "#FB8072" , "#80B1D3"
+ #        )
+
+ggplot(data.scores, aes(x = NMDS1, y = NMDS2, color = as.factor(DMMcluster))) +
+  geom_point(size = 2.5) +
+  stat_ellipse(geom = "polygon", alpha = 0) +
+  scale_color_manual(values = cols,
+                     name = "DMM cluster") +
+  theme_pubr(border = TRUE, legend = "right") 
+
+
+#calculate relative abundance of species in each DMM cluster
+cluster_commu <- RPMM_BE_single_t_filt
+cluster_commu$sample <- rownames(cluster_commu)
+
+cluster_abundance <- merge(cluster_commu, cluster_result, by = 0)
+rownames(cluster_abundance) <- cluster_abundance$Row.names
+cluster_abundance$Row.names <- NULL
+cluster_abundance$shannon <- NULL
+cluster_abundance$BSI <- NULL
+cluster_abundance$sample <- NULL
+
+cluster_abundance$Dirichlet_multinomial_4 <-
+  as.factor(cluster_abundance$Dirichlet_multinomial_4)
+
+#mean
+cluster_abundance_1 <- apply(cluster_abundance[cluster_abundance$Dirichlet_multinomial_4 == 1,
+                                               -ncol(cluster_abundance)], 2, mean)
+
+cluster_abundance_2 <- apply(cluster_abundance[cluster_abundance$Dirichlet_multinomial_4 == 2,
+                                               -ncol(cluster_abundance)], 2, mean)
+
+cluster_abundance_3 <- apply(cluster_abundance[cluster_abundance$Dirichlet_multinomial_4 == 3,
+                                               -ncol(cluster_abundance)], 2, mean)
+
+cluster_abundance_4 <- apply(cluster_abundance[cluster_abundance$Dirichlet_multinomial_4 == 4,
+                                               -ncol(cluster_abundance)], 2, mean)
+
+#merge
+cluster_abund_merge <- rbind(cluster_abundance_1, cluster_abundance_2, cluster_abundance_3,
+                             cluster_abundance_4)
+
+#calculate and plot relative abundance
+cluster_relAbund <- cluster_abund_merge
+cluster_relAbund <- as.data.frame(t(cluster_relAbund))
+cluster_relAbund <- apply(cluster_abund_merge, 1, function(x) x/sum(x)) 
+#colSums(cluster_relAbund) # = 1, 1, 1, 1
+cluster_relAbund <- data.frame(cluster_relAbund)
+
+#keep 25 most abundant
+cluster_relAbund00 <- cluster_relAbund[c(1:25),]
+cluster_relAbund_t <- data.frame(t(cluster_relAbund00))
+cluster_relAbund_t$cluster <- rownames(cluster_relAbund_t)
+
+cluster_relAbund_long <- gather(cluster_relAbund_t, key = "species", value = "Abundance",
+                                -c(cluster))
+
+cluster_relAbund_long$species <- gsub(x = cluster_relAbund_long$species, 
+                                      pattern = "\\_", replacement = " ")
+
+ggplot(cluster_relAbund_long, aes(x = cluster, y = Abundance, fill = species)) +
+  geom_bar(position = "fill", stat = "identity", color = "white") +
+  scale_y_continuous(expand = c(0.002,0.002),
+                     breaks = c(0, 0.25, 0.5, 0.75, 1),
+                     labels = c(0, 25, 50, 75, 100)) +
+  scale_x_discrete(labels = c("1", "2", "3", "4")) +
+  scale_fill_manual(values = c("Gemella haemolysans" = "sandybrown",
+                               "Gemella sanguinis" = "sandybrown",
+                               #"Haemophilus_influenzae" = "gold",
+                               "Haemophilus influenzae" = "gold3",
+                               "Lactobacillus gasseri" = "lightgoldenrod1",
+                               "Moraxella catarrhalis" = "goldenrod4",
+                               "Parvimonas micra" = "khaki3",
+                               "Prevotella melaninogenica" = "palegreen3",
+                               "Pseudomonas aeruginosa" = "darkgreen",
+                               "Rothia dentocariosa" = "darkolivegreen3",
+                               "Rothia mucilaginosa" = "darkolivegreen3",
+                               "Schaalia odontolytica" = "lightblue2",
+                               "Staphylococcus aureus" = "mediumblue",
+                               "Streptococcus anginosus" = "lightskyblue",
+                               "Streptococcus equinus" = "lightskyblue",
+                               "Streptococcus gordonii" = "lightskyblue",
+                               "Streptococcus mitis" = "lightskyblue",
+                               "Streptococcus oralis" = "lightskyblue",
+                               "Streptococcus parasanguinis" = "lightskyblue",
+                               "Streptococcus pneumoniae" = "lightskyblue",
+                               "Streptococcus pseudopneumoniae" = "lightskyblue",
+                               "Streptococcus salivarius" = "lightskyblue",
+                               "Streptococcus thermophilus" = "lightskyblue",
+                               "Veillonella atypica" = "thistle3",
+                               "Veillonella dispar" = "thistle3",
+                               "Veillonella parvula" = "thistle3"
+                               )) +
+  ylab("Mean relative abundance (in %)") + xlab("DMM cluster") +
+  #coord_flip() +
+  theme_pubr(#legend = "bottom", 
+    legend = "right",
+    border = TRUE) +
+  theme(legend.text = element_text(face = "italic", size = 8)) +
+  guides(fill = guide_legend(#nrow = 6
+                             ncol = 1
+                             ))
+
+
+#BSI distribution in clusters
+cluster_result$BSI <- data.scores$BSI
+
+cluster_result %>%
+  kruskal_test(Dirichlet_multinomial_4 ~ BSI)
+#p=0.2
+
+cluster_result %>%
+  kruskal_test(Dirichlet_multinomial_5 ~ BSI)
+#p=0.21
+
+
+mild_1 <- subset(cluster_result, BSI == "mild" & Dirichlet_multinomial_3 == 1)
+mild_2 <- subset(cluster_result, BSI == "mild" & Dirichlet_multinomial_3 == 2)
+mild_3 <- subset(cluster_result, BSI == "mild" & Dirichlet_multinomial_3 == 3)
+mild_4 <- subset(cluster_result, BSI == "mild" & Dirichlet_multinomial_4 == 4)
+
+moderate_1 <- subset(cluster_result, BSI == "moderate" & Dirichlet_multinomial_3 == 1)
+moderate_2 <- subset(cluster_result, BSI == "moderate" & Dirichlet_multinomial_3 == 2)
+moderate_3 <- subset(cluster_result, BSI == "moderate" & Dirichlet_multinomial_3 == 3)
+moderate_4 <- subset(cluster_result, BSI == "moderate" & Dirichlet_multinomial_4 == 4)
+
+severe_1 <- subset(cluster_result, BSI == "severe" & Dirichlet_multinomial_3 == 1)
+severe_2 <- subset(cluster_result, BSI == "severe" & Dirichlet_multinomial_3 == 2)
+severe_3 <- subset(cluster_result, BSI == "severe" & Dirichlet_multinomial_3 == 3)
+severe_4 <- subset(cluster_result, BSI == "severe" & Dirichlet_multinomial_4 == 4)
+
+
+ggplot(cluster_result, aes(x = as.factor(Dirichlet_multinomial_4), y = BSI)) +
+  geom_bar() 
+
+```
+
+#test metadata in clusters
+```{r}
+metadata_single$DMM <- cluster_result$Dirichlet_multinomial_4
+
+
+ggplot(metadata_single, aes(x = as.factor(DMM), y = shannon)) +
+  geom_boxplot()
+
+#get frequency of mild/moderate/severe BSI in DMM clusters
+table(metadata_single$DMM)
+table(metadata_single$BSI)
+
+mild_1 <- subset(metadata_single, BSI == "mild" & DMM == "1")
+mild_2 <- subset(metadata_single, BSI == "mild" & DMM == "2")
+mild_3 <- subset(metadata_single, BSI == "mild" & DMM == "3")
+mild_4 <- subset(metadata_single, BSI == "mild" & DMM == "4")
+
+moderate_1 <- subset(metadata_single, BSI == "moderate" & DMM == "1")
+moderate_2 <- subset(metadata_single, BSI == "moderate" & DMM == "2")
+moderate_3 <- subset(metadata_single, BSI == "moderate" & DMM == "3")
+moderate_4 <- subset(metadata_single, BSI == "moderate" & DMM == "4")
+
+severe_1 <- subset(metadata_single, BSI == "severe" & DMM == "1")
+severe_2 <- subset(metadata_single, BSI == "severe" & DMM == "2")
+severe_3 <- subset(metadata_single, BSI == "severe" & DMM == "3")
+severe_4 <- subset(metadata_single, BSI == "severe" & DMM == "4")
+
+#smoking
+table(metadata_single$Smoking_status_.y.n.ex.)
+
+no_1 <- subset(metadata_single, Smoking_status_.y.n.ex. == "0" & DMM == "1")
+no_2 <- subset(metadata_single, Smoking_status_.y.n.ex. == "0" & DMM == "2")
+no_3 <- subset(metadata_single, Smoking_status_.y.n.ex. == "0" & DMM == "3")
+no_4 <- subset(metadata_single, Smoking_status_.y.n.ex. == "0" & DMM == "4")
+
+yes_1 <- subset(metadata_single, Smoking_status_.y.n.ex. == "1" & DMM == "1")
+yes_2 <- subset(metadata_single, Smoking_status_.y.n.ex. == "1" & DMM == "2")
+yes_3 <- subset(metadata_single, Smoking_status_.y.n.ex. == "1" & DMM == "3")
+yes_4 <- subset(metadata_single, Smoking_status_.y.n.ex. == "1" & DMM == "4")
+
+ex_1 <- subset(metadata_single, Smoking_status_.y.n.ex. == "2" & DMM == "1")
+ex_2 <- subset(metadata_single, Smoking_status_.y.n.ex. == "2" & DMM == "2")
+ex_3 <- subset(metadata_single, Smoking_status_.y.n.ex. == "2" & DMM == "3")
+ex_4 <- subset(metadata_single, Smoking_status_.y.n.ex. == "2" & DMM == "4")
+
+#aetiology
+table(metadata_single$aetiology)
+
+metadata_single$aet_group <- with(metadata_single,
+                                  ifelse(aetiology == "ABPA" | aetiology == "Asthma" |
+                                           aetiology == "RheumatoidArthritis" |
+                                           aetiology == "InflammatoryBowelDisease", 
+                                         "inflammatory",
+                                  ifelse(aetiology == "idiopathic", "idiopathic",
+                                  ifelse(aetiology == "NTM" | aetiology == "post-infective",
+                                         "post-infective",
+                                  ifelse(aetiology == "alpha-1AntiTrypsinDeficiency" | 
+                                           aetiology == "CFTR-RD" | aetiology == "PCD" |
+                                           aetiology == "immunodeficiency", "hereditary",
+                                  ifelse(aetiology == "COPD", "COPD", NA))))))
+
+table(metadata_single$aet_group)
+
+COPD_1 <- subset(metadata_single, aet_group == "COPD" & DMM == "1")
+COPD_2 <- subset(metadata_single, aet_group == "COPD" & DMM == "2")
+COPD_3 <- subset(metadata_single, aet_group == "COPD" & DMM == "3")
+COPD_4 <- subset(metadata_single, aet_group == "COPD" & DMM == "4")
+
+hereditary_1 <- subset(metadata_single, aet_group == "hereditary" & DMM == "1")
+hereditary_2 <- subset(metadata_single, aet_group == "hereditary" & DMM == "2")
+hereditary_3 <- subset(metadata_single, aet_group == "hereditary" & DMM == "3")
+hereditary_4 <- subset(metadata_single, aet_group == "hereditary" & DMM == "4")
+
+idiopatic_1 <- subset(metadata_single, aet_group == "idiopathic" & DMM == "1")
+idiopatic_2 <- subset(metadata_single, aet_group == "idiopathic" & DMM == "2")
+idiopatic_3 <- subset(metadata_single, aet_group == "idiopathic" & DMM == "3")
+idiopatic_4 <- subset(metadata_single, aet_group == "idiopathic" & DMM == "4")
+
+inflammatory_1 <- subset(metadata_single, aet_group == "inflammatory" & DMM == "1")
+inflammatory_2 <- subset(metadata_single, aet_group == "inflammatory" & DMM == "2")
+inflammatory_3 <- subset(metadata_single, aet_group == "inflammatory" & DMM == "3")
+inflammatory_4 <- subset(metadata_single, aet_group == "inflammatory" & DMM == "4")
+
+postInfective_1 <- subset(metadata_single, aet_group == "post-infective" & DMM == "1")
+postInfective_2 <- subset(metadata_single, aet_group == "post-infective" & DMM == "2")
+postInfective_3 <- subset(metadata_single, aet_group == "post-infective" & DMM == "3")
+postInfective_4 <- subset(metadata_single, aet_group == "post-infective" & DMM == "4")
+
+
+#plot distribution of groups in DMM cluster
+
+#DMM_BSI
+DMM_BSI <- metadata_single[,c(6,48)]
+
+frame_DMM_BSI <- reshape2::melt(t(apply(table(DMM_BSI$BSI, DMM_BSI$DMM),
+                                        1, function(x) x/sum(x))))
+
+ggplot(frame_DMM_BSI, aes(x = Var1, y = as.factor(Var2))) +
+  geom_tile(aes(fill = value), color = "black") +
+  geom_text(aes(label = scales::percent(value, accuracy = 1))) +
+  scale_y_discrete(labels = c("DMM1", "DMM2", "DMM3", "DMM4"),
+                   breaks = c("1", "2", "3", "4")) +
+  #scale_fill_gradient(high = "#d7301f", low = "#fff7ec") +
+  scale_fill_gradient(low = "#FEE0D2", high = "#DE2D26") +
+  theme_pubr() +
+  theme(axis.line = element_blank(),
+        axis.ticks = element_blank()) +
+  ylab("") + xlab("Bronchiectasis Severity Index") +
+  guides(fill = "none")
+
+```
+
+
+#export dataset for heattree
+```{r}
+#split dataset into samples belonging to DMM cluster 1, 2, 3 and 4
+
+DMM4 <- as.data.frame(Dirichlet_multinomial_all$`DMM_k=4`)
+DMM4$sample <- rownames(Dirichlet_multinomial_all)
+rownames(DMM4) <- DMM4$sample
+colnames(DMM4) <- c("DMM4", "sample")
+
+RPMM_BE_single_t_filt$DMM <- DMM4$DMM4
+
+RPMM_DMM1 <- subset(RPMM_BE_single_t_filt, RPMM_BE_single_t_filt$DMM == "1")
+RPMM_DMM1$DMM <- NULL
+RPMM_DMM1_t <- data.frame(t(RPMM_DMM1))
+
+RPMM_DMM2 <- subset(RPMM_BE_single_t_filt, RPMM_BE_single_t_filt$DMM == "2")
+RPMM_DMM2$DMM <- NULL
+RPMM_DMM2_t <- data.frame(t(RPMM_DMM2))
+
+RPMM_DMM3 <- subset(RPMM_BE_single_t_filt, RPMM_BE_single_t_filt$DMM == "3")
+RPMM_DMM3$DMM <- NULL
+RPMM_DMM3_t <- data.frame(t(RPMM_DMM3))
+
+RPMM_DMM4 <- subset(RPMM_BE_single_t_filt, RPMM_BE_single_t_filt$DMM == "4")
+RPMM_DMM4$DMM <- NULL
+RPMM_DMM4_t <- data.frame(t(RPMM_DMM4))
+
+RPMM_BE_single_t_filt$DMM <- NULL
+
+#export tables
+write.table(RPMM_DMM1_t, file ="RPMM_DMM1.csv", col.names = TRUE, sep = ";")
+write.table(RPMM_DMM2_t, file ="RPMM_DMM2.csv", col.names = TRUE, sep = ";")
+write.table(RPMM_DMM3_t, file ="RPMM_DMM3.csv", col.names = TRUE, sep = ";")
+write.table(RPMM_DMM4_t, file ="RPMM_DMM4.csv", col.names = TRUE, sep = ";")
+
+
+#calculate mean relative abundance 
+DMM1_rel <- make_relative(as.matrix(RPMM_DMM1))
+DMM1_rel <- data.frame(DMM1_rel)
+
+DMM1_rel_t <- data.frame(t(DMM1_rel))
+DMM1_rel_t_mean <- as.data.frame(rowMeans(DMM1_rel_t))
+
+
+DMM2_rel <- make_relative(as.matrix(RPMM_DMM2))
+DMM2_rel <- data.frame(DMM2_rel)
+
+DMM2_rel_t <- data.frame(t(DMM2_rel))
+DMM2_rel_t_mean <- as.data.frame(rowMeans(DMM2_rel_t))
+
+
+DMM3_rel <- make_relative(as.matrix(RPMM_DMM3))
+DMM3_rel <- data.frame(DMM3_rel)
+
+DMM3_rel_t <- data.frame(t(DMM3_rel))
+DMM3_rel_t_mean <- as.data.frame(rowMeans(DMM3_rel_t))
+
+
+DMM4_rel <- make_relative(as.matrix(RPMM_DMM4))
+DMM4_rel <- data.frame(DMM4_rel)
+
+DMM4_rel_t <- data.frame(t(DMM4_rel))
+DMM4_rel_t_mean <- as.data.frame(rowMeans(DMM4_rel_t))
+
+sum_DMM_rel <- merge(DMM1_rel_t_mean, DMM2_rel_t_mean, by = 0, all = TRUE)
+rownames(sum_DMM_rel) <- sum_DMM_rel$Row.names
+sum_DMM_rel$Row.names <- NULL
+
+sum_DMM_rel <- merge(sum_DMM_rel, DMM3_rel_t_mean, by = 0, all = TRUE)
+rownames(sum_DMM_rel) <- sum_DMM_rel$Row.names
+sum_DMM_rel$Row.names <- NULL
+
+sum_DMM_rel <- merge(sum_DMM_rel, DMM4_rel_t_mean, by = 0, all = TRUE)
+rownames(sum_DMM_rel) <- sum_DMM_rel$Row.names
+sum_DMM_rel$Row.names <- NULL
+
+colnames(sum_DMM_rel) <- c("DMM1", "DMM2", "DMM3", "DMM4")
+sum_DMM_rel <- sum_DMM_rel[order(rowSums(sum_DMM_rel), decreasing = TRUE),]
+
+write.table(sum_DMM_rel, file = "sum_DMM_rel.csv", col.names = TRUE, sep = ";")
+
+#make heattrees for healthy and smokers as well
+#get filtered RPMM data
+
+kept_taxa_h <- names(healthy_t)
+RPMM_healthy_t_filt <- RPMM_healthy_t[,kept_taxa_h]
+
+kept_taxa_s <- names(smokers_t)
+RPMM_healthySmokers_t_filt <- RPMM_healthySmokers_t[,kept_taxa_s]
+
+RPMM_healthy_filt <- data.frame(t(RPMM_healthy_t_filt))
+RPMM_healthySmokers_filt <- data.frame(t(RPMM_healthySmokers_t_filt))
+
+write.table(RPMM_healthy_filt, file ="RPMM_healthy.csv", col.names = TRUE, sep = ";")
+write.table(RPMM_healthySmokers_filt, file ="RPMM_smokers.csv", col.names = TRUE, sep = ";")
+
+#make combined heattree, rowSums smoker and rowSums healthy
+heattree_smokers <- as.data.frame(rowSums(RPMM_healthySmokers_filt))
+colnames(heattree_smokers) <- "smoker"
+
+heattree_healthy <- as.data.frame(rowSums(RPMM_healthy_filt))
+colnames(heattree_healthy) <- "healthy"
+
+#combine
+heattree_healthy_smoker <- merge(heattree_healthy, heattree_smokers, all = TRUE, by = 0)
+
+rownames(heattree_healthy_smoker) <- heattree_healthy_smoker$Row.names
+heattree_healthy_smoker$Row.names <- NULL
+heattree_healthy_smoker[is.na(heattree_healthy_smoker)] <- 0
+heattree_healthy_smoker <- heattree_healthy_smoker[order(rowSums(heattree_healthy_smoker),
+                                                         decreasing = TRUE),]
+
+write.table(heattree_healthy_smoker, file ="heattree_healthy_smoker.csv", 
+            col.names = TRUE, sep = ";")
+
+#make relAbund rowMeans
+smokers_rel_tree <- make_relative(as.matrix(RPMM_healthySmokers_t_filt))
+smokers_rel_tree <- data.frame(smokers_rel_tree)
+
+smokers_rel_tree_t <- data.frame(t(smokers_rel_tree))
+smokers_rel_tree_t_mean <- as.data.frame(rowMeans(smokers_rel_tree_t))
+
+
+healthy_rel_tree <- make_relative(as.matrix(RPMM_healthy_t_filt))
+healthy_rel_tree <- data.frame(healthy_rel_tree)
+
+healthy_rel_tree_t <- data.frame(t(healthy_rel_tree))
+healthy_rel_tree_t_mean <- as.data.frame(rowMeans(healthy_rel_tree_t))
+
+
+healthy_smokers_tree_relMean <- merge(smokers_rel_tree_t_mean, healthy_rel_tree_t_mean,
+                                      by = 0, all = TRUE)
+rownames(healthy_smokers_tree_relMean) <- healthy_smokers_tree_relMean$Row.names
+healthy_smokers_tree_relMean$Row.names <- NULL
+healthy_smokers_tree_relMean[is.na(healthy_smokers_tree_relMean)] <- 0
+colnames(healthy_smokers_tree_relMean) <- c("smokers", "healthy")
+
+write.table(healthy_smokers_tree_relMean, 
+            file ="heattree_healthy_smoker_relAbundMean.csv", 
+            col.names = TRUE, sep = ";")
+
+
+#combine DMM, healthy and healthy smoker for heattree
+heattree_all_rel <- merge(sum_DMM_rel, healthy_smokers_tree_relMean,
+                          by = 0, all = TRUE)
+
+rownames(heattree_all_rel) <- heattree_all_rel$Row.names
+heattree_all_rel$Row.names <- NULL
+heattree_all_rel[is.na(heattree_all_rel)] <- 0
+heattree_all_rel <- heattree_all_rel[order(rowSums(heattree_all_rel), decreasing = TRUE),]
+
+write.table(heattree_all_rel,
+            file = "heattree_all_relAbundMean.csv",
+            col.names = TRUE, sep = ";")
+
+```
+
+#heatmaps based on DMM clustering
+```{r}
+
+#calculate age quartiles bronchiectasis
+summary(metadata_single$age)
+#min 21, 1st Qu 63, Median 68, Mean 66, 3rd Qu. 75, max 91
+
+#1st quartile 21-62 years: 25 patients
+#2nd quartile 63-68 years: 26 patients
+#3rd quartile 69-74 years: 24 patients
+#4th quartile 75-91 years: 26 patients
+
+#make subsets for DMM cluster and age quartiles
+metadata_single <- metadata_single[order(rownames(metadata_single)),]
+#work with RPMM values
+
+#include cumulative healthy metagenome?
+RPMM_healthy_cumulative <- as.data.frame(rowMeans(RPMM_healthy_filt))
+colnames(RPMM_healthy_cumulative) <- c("healthy")
+RPMM_BE_healthy <- merge(data.frame(t(RPMM_BE_single_t_filt)), RPMM_healthy_cumulative,
+                         by = 0, all = TRUE)
+rownames(RPMM_BE_healthy) <- RPMM_BE_healthy$Row.names
+RPMM_BE_healthy$Row.names <- NULL
+RPMM_BE_healthy[is.na(RPMM_BE_healthy)] <- 0
+RPMM_BE_healthy <- RPMM_BE_healthy[order(rowSums(RPMM_BE_healthy), decreasing = TRUE),]
+
+heatmap_healthy00 <- as.data.frame(RPMM_BE_healthy[,c(102)])
+rownames(heatmap_healthy00) <- rownames(RPMM_BE_healthy)
+colnames(heatmap_healthy00) <- c("healthy")
+heatmap_healthy01 <- data.frame(t(heatmap_healthy00))
+heatmap_healthy01_t <- data.frame(t(heatmap_healthy01))
+heatmap_healthy01_t$species <- rownames(heatmap_healthy01_t)
+
+heatmap00 <- as.data.frame(RPMM_BE_healthy[,c(1:101)])
+heatmap01 <- data.frame(t(heatmap00))
+
+heatmap01$age <- metadata_single$age
+heatmap01$DMM <- cluster_result$Dirichlet_multinomial_4
+
+
+
+heatmap_DMM1 <- subset(heatmap01, DMM == "1")
+heatmap_DMM2 <- subset(heatmap01, DMM == "2")
+heatmap_DMM3 <- subset(heatmap01, DMM == "3")
+heatmap_DMM4 <- subset(heatmap01, DMM == "4")
+
+heatmap_DMM1$DMM <- NULL
+heatmap_DMM1_1st <- subset(heatmap_DMM1, age < 63)
+heatmap_DMM1_2nd <- subset(heatmap_DMM1, age > 62 & age < 69)
+heatmap_DMM1_3rd <- subset(heatmap_DMM1, age > 68 & age < 75)
+heatmap_DMM1_4th <- subset(heatmap_DMM1, age > 74)
+
+heatmap_DMM1_1st$age <- NULL
+heatmap_DMM1_2nd$age <- NULL
+heatmap_DMM1_3rd$age <- NULL
+heatmap_DMM1_4th$age <- NULL
+
+
+heatmap_DMM2$DMM <- NULL
+heatmap_DMM2_1st <- subset(heatmap_DMM2, age < 63)
+heatmap_DMM2_2nd <- subset(heatmap_DMM2, age > 62 & age < 69)
+heatmap_DMM2_3rd <- subset(heatmap_DMM2, age > 68 & age < 75)
+heatmap_DMM2_4th <- subset(heatmap_DMM2, age > 74)
+
+heatmap_DMM2_1st$age <- NULL
+heatmap_DMM2_2nd$age <- NULL
+heatmap_DMM2_3rd$age <- NULL
+heatmap_DMM2_4th$age <- NULL
+
+
+heatmap_DMM3$DMM <- NULL
+heatmap_DMM3_1st <- subset(heatmap_DMM3, age < 63)
+heatmap_DMM3_2nd <- subset(heatmap_DMM3, age > 62 & age < 69)
+heatmap_DMM3_3rd <- subset(heatmap_DMM3, age > 68 & age < 75)
+heatmap_DMM3_4th <- subset(heatmap_DMM3, age > 74)
+
+heatmap_DMM3_1st$age <- NULL
+heatmap_DMM3_2nd$age <- NULL
+heatmap_DMM3_3rd$age <- NULL
+heatmap_DMM3_4th$age <- NULL
+
+
+heatmap_DMM4$DMM <- NULL
+heatmap_DMM4_1st <- subset(heatmap_DMM4, age < 63)
+heatmap_DMM4_2nd <- subset(heatmap_DMM4, age > 62 & age < 69)
+heatmap_DMM4_3rd <- subset(heatmap_DMM4, age > 68 & age < 75)
+heatmap_DMM4_4th <- subset(heatmap_DMM4, age > 74)
+
+heatmap_DMM4_1st$age <- NULL
+heatmap_DMM4_2nd$age <- NULL
+heatmap_DMM4_3rd$age <- NULL
+heatmap_DMM4_4th$age <- NULL
+
+
+
+#randomly select two samples from every cluster age quartile
+
+#rand_DMM1_1st <- heatmap_DMM1_1st[sample(nrow(heatmap_DMM1_1st), 2),] #005,090
+rand_DMM1_1st <- heatmap_DMM1_1st[c(1,9),]
+rand_DMM1_1st_t <- data.frame(t(rand_DMM1_1st))
+rand_DMM1_1st_t$species <- rownames(rand_DMM1_1st_t)
+#rand_DMM1_2nd <- heatmap_DMM1_2nd[sample(nrow(heatmap_DMM1_2nd), 2),] #014,029
+rand_DMM1_2nd <- heatmap_DMM1_2nd[c(2,3),]
+rand_DMM1_2nd_t <- data.frame(t(rand_DMM1_2nd))
+rand_DMM1_2nd_t$species <- rownames(rand_DMM1_2nd_t)
+#rand_DMM1_3rd <- heatmap_DMM1_3rd[sample(nrow(heatmap_DMM1_3rd), 2),] #013,030
+rand_DMM1_3rd <- heatmap_DMM1_3rd[c(1,3),]
+rand_DMM1_3rd_t <- data.frame(t(rand_DMM1_3rd))
+rand_DMM1_3rd_t$species <- rownames(rand_DMM1_3rd_t)
+#rand_DMM1_4th <- heatmap_DMM1_4th[sample(nrow(heatmap_DMM1_4th), 2),] #028,099
+rand_DMM1_4th <- heatmap_DMM1_4th[c(3,7),]
+rand_DMM1_4th_t <- data.frame(t(rand_DMM1_4th))
+rand_DMM1_4th_t$species <- rownames(rand_DMM1_4th_t)
+
+#rand_DMM2_1st <- heatmap_DMM2_1st[sample(nrow(heatmap_DMM2_1st), 2),] #058,087
+rand_DMM2_1st <- heatmap_DMM2_1st[c(7,8),]
+rand_DMM2_1st_t <- data.frame(t(rand_DMM2_1st))
+rand_DMM2_1st_t$species <- rownames(rand_DMM2_1st_t)
+#rand_DMM2_2nd <- heatmap_DMM2_2nd[sample(nrow(heatmap_DMM2_2nd), 2),] #092,098
+rand_DMM2_2nd <- heatmap_DMM2_2nd[c(8,9),]
+rand_DMM2_2nd_t <- data.frame(t(rand_DMM2_2nd))
+rand_DMM2_2nd_t$species <- rownames(rand_DMM2_2nd_t)
+#rand_DMM2_3rd <- heatmap_DMM2_3rd[sample(nrow(heatmap_DMM2_3rd), 2),] #069,096
+rand_DMM2_3rd <- heatmap_DMM2_3rd[c(5,6),]
+rand_DMM2_3rd_t <- data.frame(t(rand_DMM2_3rd))
+rand_DMM2_3rd_t$species <- rownames(rand_DMM2_3rd_t)
+#rand_DMM2_4th <- heatmap_DMM2_4th[sample(nrow(heatmap_DMM2_4th), 2),] #071,095
+rand_DMM2_4th <- heatmap_DMM2_4th[c(7,9),]
+rand_DMM2_4th_t <- data.frame(t(rand_DMM2_4th))
+rand_DMM2_4th_t$species <- rownames(rand_DMM2_4th_t)
+
+#rand_DMM3_1st <- heatmap_DMM3_1st[sample(nrow(heatmap_DMM3_1st), 2),] #019,088
+rand_DMM3_1st <- heatmap_DMM3_1st[c(1,2),]
+rand_DMM3_1st_t <- data.frame(t(rand_DMM3_1st))
+rand_DMM3_1st_t$species <- rownames(rand_DMM3_1st_t)
+#rand_DMM3_2nd <- heatmap_DMM3_2nd[sample(nrow(heatmap_DMM3_2nd), 2),] #046,054
+rand_DMM3_2nd <- heatmap_DMM3_2nd[c(3,4),]
+rand_DMM3_2nd_t <- data.frame(t(rand_DMM3_2nd))
+rand_DMM3_2nd_t$species <- rownames(rand_DMM3_2nd_t)
+#rand_DMM3_3rd <- heatmap_DMM3_3rd[sample(nrow(heatmap_DMM3_3rd), 2),] #009,070
+rand_DMM3_3rd <- heatmap_DMM3_3rd[c(1,2),]
+rand_DMM3_3rd_t <- data.frame(t(rand_DMM3_3rd))
+rand_DMM3_3rd_t$species <- rownames(rand_DMM3_3rd_t)
+#rand_DMM3_4th <- heatmap_DMM3_4th[sample(nrow(heatmap_DMM3_4th), 2),] #085,089
+rand_DMM3_4th <- heatmap_DMM3_4th[c(5,6),]
+rand_DMM3_4th_t <- data.frame(t(rand_DMM3_4th))
+rand_DMM3_4th_t$species <- rownames(rand_DMM3_4th_t)
+
+
+#rand_DMM4_1st <- heatmap_DMM4_1st[sample(nrow(heatmap_DMM4_1st), 2),] #001,012
+rand_DMM4_1st <- heatmap_DMM4_1st[c(1,2),]
+rand_DMM4_1st_t <- data.frame(t(rand_DMM4_1st))
+rand_DMM4_1st_t$species <- rownames(rand_DMM4_1st_t)
+#rand_DMM4_2nd <- heatmap_DMM4_2nd[sample(nrow(heatmap_DMM4_2nd), 2),] #017,102
+rand_DMM4_2nd <- heatmap_DMM4_2nd[c(1,3),]
+rand_DMM4_2nd_t <- data.frame(t(rand_DMM4_2nd))
+rand_DMM4_2nd_t$species <- rownames(rand_DMM4_2nd_t)
+#rand_DMM4_3rd <- heatmap_DMM4_3rd[sample(nrow(heatmap_DMM4_3rd), 2),] #068,106
+rand_DMM4_3rd <- heatmap_DMM4_3rd[c(1,2),]
+rand_DMM4_3rd_t <- data.frame(t(rand_DMM4_3rd))
+rand_DMM4_3rd_t$species <- rownames(rand_DMM4_3rd_t)
+#rand_DMM4_4th <- heatmap_DMM4_4th[sample(nrow(heatmap_DMM4_4th), 2),] #006,020
+rand_DMM4_4th <- heatmap_DMM4_4th[c(1,2),]
+rand_DMM4_4th_t <- data.frame(t(rand_DMM4_4th))
+rand_DMM4_4th_t$species <- rownames(rand_DMM4_4th_t)
+
+#combine all randomly selected pairs
+heatmap_list1 <- list(heatmap_healthy01_t,
+                      rand_DMM1_1st_t, rand_DMM1_2nd_t, 
+                      rand_DMM1_3rd_t, rand_DMM1_4th_t,
+                      rand_DMM2_1st_t, rand_DMM2_2nd_t, 
+                      rand_DMM2_3rd_t, rand_DMM2_4th_t,
+                      heatmap_healthy01_t,
+                      rand_DMM3_1st_t, rand_DMM3_2nd_t, 
+                      rand_DMM3_3rd_t, rand_DMM3_4th_t,
+                      rand_DMM4_1st_t, rand_DMM4_2nd_t, 
+                      rand_DMM4_3rd_t, rand_DMM4_4th_t)
+heatmap_combined1 <- Reduce(function(x ,y) merge(x, y, all = TRUE), heatmap_list1)
+rownames(heatmap_combined1) <- heatmap_combined1$species
+heatmap_combined1$species <- NULL
+
+heatmap_combined1_00 <- heatmap_combined1[order(rowSums(heatmap_combined1), decreasing = TRUE),]
+
+#restrict to 40 most abundant species and keep DMM info
+heatmap_combined1_01 <- heatmap_combined1_00[c(1:40),]
+
+#heatmap healthy plus DMM1&2
+heatmap_combined_12 <- heatmap_combined1_01[,c(1:17)]
+
+heatmap_combined_12[heatmap_combined_12 == 0] <- NA
+rownames(heatmap_combined_12) <- gsub(x = rownames(heatmap_combined_12), 
+                                      pattern = "\\_", replacement = " ")
+
+newnames1 <- lapply(rownames(heatmap_combined_12),
+                   function(x) bquote(italic(.(x))))
+
+pheatmap(log10(as.matrix((heatmap_combined_12+1))),
+         na_col = "grey60",
+         border_color = "grey40",
+         cluster_rows = FALSE,
+         cluster_cols = FALSE,
+         gaps_col = c(1,3,5,7,9,11,13,15),
+         labels_row = as.expression(newnames1),
+         fontsize = 9)
+
+
+
+#heatmap healthy plus DMM3&4
+heatmap_combined_34 <- heatmap_combined1_01[,c(1,18:33)]
+
+heatmap_combined_34[heatmap_combined_34 == 0] <- NA
+rownames(heatmap_combined_34) <- gsub(x = rownames(heatmap_combined_34), 
+                                      pattern = "\\_", replacement = " ")
+
+newnames2 <- lapply(rownames(heatmap_combined_34),
+                   function(x) bquote(italic(.(x))))
+
+pheatmap(log10(as.matrix((heatmap_combined_34+1))),
+         na_col = "grey60",
+         border_color = "grey40",
+         cluster_rows = FALSE,
+         cluster_cols = FALSE,
+         gaps_col = c(1,3,5,7,9,11,13,15),
+         labels_row = as.expression(newnames2),
+         fontsize = 9)
+
+```
+
+
+
+#Supplement: readcount samples and blanks
+```{r}
+
+library(scales)
+
+readCounts_BE_healthy_smokers_blanks <- read_excel("readCounts_BE_healthy_smoker_blank.xlsx")
+
+readCounts_BE_healthy_smokers_blanks <- data.frame(readCounts_BE_healthy_smokers_blanks)
+
+
+#total read counts for WGS analysis
+
+total_readCount <- readCounts_BE_healthy_smokers_blanks[,c(3,6,9,12)]
+
+total_readCount_long <- gather(total_readCount, key = "type", value = "readCount")
+
+#gather(cluster_relAbund_t, key = "species", value = "Abundance", -c(cluster))
+
+total_readCount_long01 <- total_readCount_long[!is.na(total_readCount_long$readCount),]
+total_readCount_long01$number <- c(1:228)
+
+ggplot(total_readCount_long01, aes(x = number, y = readCount, color = type)) +
+  geom_point() + 
+  scale_y_continuous(trans = log10_trans(),
+                     breaks = trans_breaks("log10", function(x) 10^x),
+                     labels = trans_format("log10", math_format(10^.x))) +
+  annotation_logticks(sides = "l") +
+  scale_color_manual(values = c("BE_all" = "#F8766D",
+                                "blank_all" = "#C77CFF",
+                                "healthy_all" = "#7CAE00",
+                                "smoker_all" = "#00BFC4"),
+                     labels = c("Bronchiectasis", "Blank controls", "Healthy non-smoker",
+                                "Healthy smoker"),
+                     name = "Sample type") +
+  ylab("Total read count") + xlab("Sample") +
+  theme_pubr(legend = "right")
+
+
+#make stacked bar plots for species found in samples and blanks
+mean_species_readCount_BE <- read_excel("mean_species_readCount.xlsx", 
+    sheet = "BE")
+mean_species_readCount_BE <- data.frame(mean_species_readCount_BE)
+mean_species_readCount_BE <- mean_species_readCount_BE[order(mean_species_readCount_BE$BE,
+                                                             decreasing = TRUE),]
+
+
+mean_species_readCount_healthy <- read_excel("mean_species_readCount.xlsx", 
+    sheet = "healthy")
+mean_species_readCount_healthy <- data.frame(mean_species_readCount_healthy)
+mean_species_readCount_healthy <- mean_species_readCount_healthy[order(
+  mean_species_readCount_healthy$healthy, decreasing = TRUE),]
+
+
+mean_species_readCount_smoker <- read_excel("mean_species_readCount.xlsx", 
+    sheet = "smoker")
+mean_species_readCount_smoker <- data.frame(mean_species_readCount_smoker)
+mean_species_readCount_smoker <- mean_species_readCount_smoker[order(
+  mean_species_readCount_smoker$smoker, decreasing = TRUE),]
+
+
+mean_species_readCount_blank <- read_excel("mean_species_readCount.xlsx", 
+    sheet = "blank")
+mean_species_readCount_blank <- data.frame(mean_species_readCount_blank)
+mean_species_readCount_blank <- mean_species_readCount_blank[order(
+  mean_species_readCount_blank$blank, decreasing = TRUE),]
+
+
+#take top10 species for each sample type, combine remaining species as "other"
+mean_readCount_BE <- mean_species_readCount_BE[c(1:10),]
+other_BE <- sum(mean_species_readCount_BE[11:239, "BE"])
+mean_readCount_BE[nrow(mean_readCount_BE) + 1,] = c("other", other_BE)
+
+mean_readCount_healthy <- mean_species_readCount_healthy[c(1:10),]
+other_healthy <- sum(mean_species_readCount_healthy[11:152, "healthy"])
+mean_readCount_healthy[nrow(mean_readCount_healthy) + 1,] = c("other", other_healthy)
+
+mean_readCount_smoker <- mean_species_readCount_smoker[c(1:10),]
+other_smoker <- sum(mean_species_readCount_smoker[11:110, "smoker"])
+mean_readCount_smoker[nrow(mean_readCount_smoker) + 1,] = c("other", other_smoker)
+
+mean_readCount_blank <- mean_species_readCount_blank[c(1:10),]
+#other_blank <- sum(mean_species_readCount_blank[11:110, "blank"])
+mean_readCount_blank[nrow(mean_readCount_blank) + 1,] = c("other", "0")
+
+#combine 
+mean_readCount_list <- list(mean_readCount_BE, mean_readCount_healthy,
+                            mean_readCount_smoker, mean_readCount_blank)
+
+mean_readCount_combined <- Reduce(function(x, y) merge(x, y, all = TRUE), mean_readCount_list)
+
+mean_readCount_combined[is.na(mean_readCount_combined)] <- 0
+rownames(mean_readCount_combined) <- mean_readCount_combined$species
+mean_readCount_combined$species <- NULL
+
+
+mean_readCount_combined_t <- data.frame(t(mean_readCount_combined))
+mean_readCount_combined_t$type <- rownames(mean_readCount_combined_t)
+
+
+mean_readCount_combined_long <- gather(mean_readCount_combined_t, key = "species",
+                                       value = "readCount",
+                                       -c(type))
+
+mean_readCount_combined_long$readCount <- as.numeric(mean_readCount_combined_long$readCount)
+mean_readCount_combined_long$species <- gsub(x = mean_readCount_combined_long$species,
+                                             pattern = "\\.", replacement = " ")
+
+
+ggplot(mean_readCount_combined_long, aes(x = type, y = readCount, fill = species)) +
+  geom_bar(position = "fill", stat = "identity", color = "white") +
+  scale_y_continuous(expand = c(0.002, 0.002),
+                     breaks = c(0, 0.25, 0.5, 0.75, 1),
+                     labels = c(0, 25, 50, 75, 100)) +
+  scale_x_discrete(limits = c("BE", "healthy", "smoker", "blank"),
+                   labels = c("Bronchiectasis", "Healthy non-smokers", "Healthy smokers",
+                              "Blank controls")) +
+  scale_fill_manual(values = c(#"Aeromonas caviae" = "coral4",
+                               "Aeromonas caviae" = "bisque4",
+                               "Cutibacterium acnes" = "chocolate4",
+                               "Gemella sanguinis" = "red3",
+                               "Haemophilus influenzae" = "tomato3",
+                               "Halomonas campaniensis" = "indianred1",
+                               "Kocuria palustris" = "darkorange1",
+                               "Micrococcus luteus" = "darkgoldenrod1", 
+                               "Moraxella catarrhalis" = "olivedrab1",
+                               "Neisseria subflava" = "yellowgreen",
+                               "other" = "grey70",
+                               "Prevotella jejuni" = "green4",
+                               "Prevotella melaninogenica" = "green4",
+                               "Pseudomonas aeruginosa" = "seagreen2",
+                               "Rothia dentocariosa" = "cadetblue2",
+                               "Rothia mucilaginosa" = "cadetblue2",
+                               "Schaalia odontolytica" = "turquoise2",
+                               "Serratia marcescens" = "royalblue2",
+                               "Staphylococcus aureus" = "navy",
+                               "Streptococcus equinus" = "purple3",
+                               "Streptococcus mitis" = "purple3",
+                               "Streptococcus oralis" = "purple3",
+                               "Streptococcus parasanguinis" = "purple3",
+                               "Streptococcus salivarius" = "purple3",
+                               "Veillonella atypica" = "mediumpurple1",
+                               "Veillonella dispar" = "mediumpurple1",
+                               "Vibrio splendidus" = "plum2"
+                               ),
+                    name = "Species") +
+  ylab("Mean relative abundance (in %)") + xlab("Sample type") +
+  theme_pubr(legend = "right") +
+  theme(legend.text = element_text(face = "italic", size = 8)) +
+  guides(fill = guide_legend(ncol = 1))
+
+
+ggplot(cluster_relAbund_long, aes(x = cluster, y = Abundance, fill = species)) +
+  scale_fill_manual(values = c("Gemella haemolysans" = "sandybrown",
+                               "Gemella sanguinis" = "sandybrown",
+                               #"Haemophilus_influenzae" = "gold",
+                               "Haemophilus influenzae" = "gold3",
+                               "Lactobacillus gasseri" = "lightgoldenrod1",
+                               "Moraxella catarrhalis" = "goldenrod4",
+                               "Parvimonas micra" = "khaki3",
+                               "Prevotella melaninogenica" = "palegreen3",
+                               "Pseudomonas aeruginosa" = "darkgreen",
+                               "Rothia dentocariosa" = "darkolivegreen3",
+                               "Rothia mucilaginosa" = "darkolivegreen3",
+                               "Schaalia odontolytica" = "lightblue2",
+                               "Staphylococcus aureus" = "mediumblue",
+                               "Streptococcus anginosus" = "lightskyblue",
+                               "Streptococcus equinus" = "lightskyblue",
+                               "Streptococcus gordonii" = "lightskyblue",
+                               "Streptococcus mitis" = "lightskyblue",
+                               "Streptococcus oralis" = "lightskyblue",
+                               "Streptococcus parasanguinis" = "lightskyblue",
+                               "Streptococcus pneumoniae" = "lightskyblue",
+                               "Streptococcus pseudopneumoniae" = "lightskyblue",
+                               "Streptococcus salivarius" = "lightskyblue",
+                               "Streptococcus thermophilus" = "lightskyblue",
+                               "Veillonella atypica" = "thistle3",
+                               "Veillonella dispar" = "thistle3",
+                               "Veillonella parvula" = "thistle3"
+                               )) +
+  guides(fill = guide_legend(#nrow = 6
+                             ncol = 1
+                             ))
+
+
+```
+
+#comparison wochenende, metaphlan and krakenuniq
+```{r}
+#load files
+metaphlan <- read_excel("merged_abundance_table_bearbeitet.xlsx")
+metaphlan <- data.frame(metaphlan)
+
+metaphlan <- metaphlan[-c(1),]
+rownames(metaphlan) <- metaphlan$species
+metaphlan$species <- NULL
+#make new relative table (deleted Homo sapiens)
+metaphlan_t <- data.frame(t(metaphlan))
+metaphlan_t <- make_relative(as.matrix(metaphlan_t))
+metaphlan_t <- data.frame(metaphlan_t)
+metaphlan <- data.frame(t(metaphlan_t))
+#filtering
+
+#abundance filtering: exclude every species where every column has a threshold below 1%
+#abundance > 1% in at least one sample
+top_abundant_meta <- metaphlan[!apply(metaphlan<0.01, 1, all, na.rm=TRUE),]
+#120 species
+#prevalence filtering: species must appear in 10% of all samples
+prev_filt_abund = 90
+
+metaphlan_prev <- metaphlan
+
+n_prev = round(length(colnames(metaphlan_prev)) * prev_filt_abund / 100)
+metaphlan_prev[metaphlan_prev == 0] <- NA
+metaphlan_prev <- metaphlan_prev[rowSums(is.na(metaphlan_prev)) < n_prev, ]
+metaphlan_prev[is.na(metaphlan_prev)] <- 0
+#63 species
+
+#combine abundance and prevalence filtered datasets
+#127 species
+metaphlan_filt <- unique(rbind(metaphlan_prev, top_abundant_meta))
+
+metaphlan_filt_t <- data.frame(t(metaphlan_filt))
+
+#make new relative abundance table to again obtain 100%
+meta_t <- make_relative(as.matrix(metaphlan_filt_t))
+meta_t <- data.frame(meta_t)
+
+meta <- data.frame(t(meta_t))
+meta <- meta[order(rowSums(meta), decreasing = TRUE),]
+
+meta_t <- data.frame(t(meta))
+
+
+wochenende <- read_excel("wochenende_R_filt.xlsx")
+wochenende <- data.frame(wochenende)
+
+rownames(wochenende) <- wochenende$species
+wochenende$species <- NULL
+
+  
+kraken1 <- read_excel("krakenuniq1.xlsx")
+kraken1 <- data.frame(kraken1)
+
+rownames(kraken1) <- kraken1$species
+kraken1$species <- NULL
+kraken1 <- kraken1[-c(1),]
+
+kraken2 <- read_excel("krakenuniq2.xlsx")
+kraken2 <- data.frame(kraken2)
+
+rownames(kraken2) <- kraken2$species
+kraken2$species <- NULL
+kraken2 <- kraken2[-c(1),]
+
+krakenall <- merge(kraken1, kraken2, all = TRUE, by = 0)
+rownames(krakenall) <- krakenall$Row.names
+krakenall$Row.names <- NULL
+krakenall[is.na(krakenall)] <- 0
+
+#make relative table without human
+kraken_t <- data.frame(t(krakenall))
+kraken_t <- make_relative(as.matrix(kraken_t))
+kraken_t <- data.frame(kraken_t)
+krakenall <- data.frame(t(kraken_t))
+
+#prevalence and abundance filtering
+#abundance filtering: exclude every species where every column has a threshold below 1%
+#abundance > 1% in at least one sample
+top_abundant_kraken <- krakenall[!apply(krakenall<0.01, 1, all, na.rm=TRUE),]
+#145 species
+#prevalence filtering: species must appear in 10% of all samples
+prev_filt_abund = 90
+
+kraken_prev <- krakenall
+
+n_prev = round(length(colnames(kraken_prev)) * prev_filt_abund / 100)
+kraken_prev[kraken_prev == 0] <- NA
+kraken_prev <- kraken_prev[rowSums(is.na(kraken_prev)) < n_prev, ]
+kraken_prev[is.na(kraken_prev)] <- 0
+#226 species
+
+#combine abundance and prevalence filtered datasets
+#266 species
+kraken_filt <- unique(rbind(kraken_prev, top_abundant_kraken))
+
+
+#export dataset to remove sp. columns
+write.csv(kraken_filt, file = "krakenfilt.csv", row.names = TRUE, col.names = TRUE)
+
+#load table
+krakenuniq <- read_delim("krakenfilt_bearbeitet.csv", 
+    delim = ";", escape_double = FALSE, trim_ws = TRUE)
+
+krakenuniq <- data.frame(krakenuniq)
+rownames(krakenuniq) <- krakenuniq$species
+krakenuniq$species <- NULL
+
+krakenuniq_t <- data.frame(t(krakenuniq))
+
+#make new relative abundance table to again obtain 100%
+krakenuniq_t <- make_relative(as.matrix(krakenuniq_t))
+krakenuniq_t <- data.frame(krakenuniq_t)
+
+krakenuniq <- data.frame(t(krakenuniq_t))
+
+
+metadata_all <- read_excel("metadata_comparisonAll.xlsx")
+metadata_all <- data.frame(metadata_all)
+rownames(metadata_all) <- metadata_all$sample
+metadata_all$pair <- as.character(metadata_all$pair)
+
+
+#combine metaphlan, wochenende and krakenuniq tables
+all00 <- merge(krakenuniq, meta, all = TRUE, by = 0)
+rownames(all00) <- all00$Row.names
+all00$Row.names <- NULL
+all00[is.na(all00)] <- 0
+
+all01 <- merge(all00, wochenende, all = TRUE, by = 0)
+rownames(all01) <- all01$Row.names
+all01$Row.names <- NULL
+all01[is.na(all01)] <- 0
+
+
+all01_t <- data.frame(t(all01))
+all01_t <- all01_t[order(rownames(all01_t)),]
+
+#NMDS
+
+set.seed(2)
+
+mdsAll <- metaMDS(all01_t, distance = "bray", k = 3, 
+                          autotransform = TRUE, trymax = 100 )
+#stress=0.17
+
+stressplot(mdsAll)
+
+data.scoresAll <- as.data.frame(scores(mdsAll)$sites)
+
+metadata_all <-
+  metadata_all[order(rownames(metadata_all)),]
+
+data.scoresAll$tool <- metadata_all$tool
+data.scoresAll$pair <- metadata_all$pair
+
+
+
+envit_metadataAll <- data.scoresAll
+envit_metadataAll$NMDS1 <- NULL
+envit_metadataAll$NMDS2 <- NULL
+envit_metadataAll$NMDS3 <- NULL
+
+envit_metadataAll <- data.frame(cbind(envit_metadataAll, all01_t))
+
+data.envitAll <- envfit(mdsAll, envit_metadataAll, permutation = 999, 
+                             na.rm = TRUE)
+data.envitAll
+
+
+ggplot(data.scoresAll, aes(x = NMDS1, y = NMDS2, color = tool)) +
+  geom_point(size = 2) +
+  #stat_ellipse(geom = "polygon", alpha = 0.1) +
+  scale_color_manual(values = c("krakenuniq" = "#7CAE00",
+                                "metaphlan" = "#F8766D",
+                                "wochenende" = "#00BFC4"),
+                     labels = c("KrakenUniq", "MetaPhlAn3", "Wochenende"),
+                     name = "Tool") +
+  theme_pubr(border = TRUE, legend = "none") 
+
+#add centroids
+ggplot(data.scoresAll, aes(x = NMDS1, y = NMDS2, color = tool)) +
+  geom_point(size = 2.5, alpha = 0.45) +
+  #stat_ellipse(geom = "polygon"
+               #, alpha = 0.01
+               #) +
+  geom_point(aes(x = 0.0939, y = 0.0032), shape = 4, color = "#7CAE00", size = 3) + #krakenuniq
+  geom_point(aes(x = -0.0950, y = -0.0071), shape = 4, color = "#F8766D", size = 3) + #metaphla
+  geom_point(aes(x = 0.0011, y = 0.0039), shape = 4, color = "#00BFC4", size = 3) + #wochenende
+  scale_color_manual(values = c("krakenuniq" = "#7CAE00",
+                                "metaphlan" = "#F8766D",
+                                "wochenende" = "#00BFC4"),
+                     labels = c("KrakenUniq", "MetaPhlAn3", "Wochenende"),
+                     name = "Tool") +
+  theme_pubr(border = TRUE, legend = "none")
+
+ggplot(data.scoresAll, aes(x = NMDS1, y = NMDS2, color = pair)) +
+  geom_point(size = 2) +
+  #stat_ellipse(geom = "polygon", alpha = 0.1) +
+  theme_pubr(border = TRUE, legend = "none") 
+
+
+
+#try to better differentiate points/patient triplets
+#try first with subset
+subs <- data.scoresAll[c(1:27),]
+
+#test transparent colours
+library(colorspace)
+## Function for desaturating colors by specified proportion
+desat <- function(cols, sat=0.5) {
+    X <- diag(c(1, sat, 1)) %*% rgb2hsv(col2rgb(cols))
+    hsv(X[1,], X[2,], X[3,])
+}
+
+# Utility function for plotting color palettes, 
+## (from vignette("hcl-colors"))
+pal <- function(col, border = "light gray", ...) {
+  n <- length(col)
+  plot(0, 0, type="n", xlim = c(0, 1), ylim = c(0, 1),
+  axes = FALSE, xlab = "", ylab = "", ...)
+  rect(0:(n-1)/n, 0, 1:n/n, 1, col = col, border = border)
+}
+
+
+red100 <- "#E41A1C"
+red75 <- desat(red100, 0.75)
+red50 <- desat(red100, 0.50)
+
+blue100 <- "#377EB8"
+blue75 <- desat(blue100, 0.75)
+blue50 <- desat(blue100, 0.50)
+
+green100 <- "#4DAF4A"
+green75 <- desat(green100, 0.75)
+green50 <- desat(green100, 0.50)
+
+purple100 <- "#984EA3"
+purple75 <- desat(purple100, 0.75)
+purple50 <- desat(purple100, 0.50)
+
+orange100 <- "#FF7F00"
+orange75 <- desat(orange100, 0.75)
+orange50 <- desat(orange100, 0.50)
+
+grey100 <- "grey20"
+grey75 <- "grey40"
+grey50 <- "grey60"
+
+
+ggplot(subs, aes(x = NMDS1, y = NMDS2, color = pair, shape = pair)) +
+  geom_point(size = 5) +
+  scale_color_manual(values = c(red100, blue100, green100, purple100, 
+                                orange100, grey100,
+                                red75, blue75, green75
+                               )) +
+  scale_shape_manual(values = c(19, 15, 18, 17, 3, 8,
+                                19, 15, 18)) +
+  theme_pubr(border = TRUE)
+
+#try for all
+
+ggplot(data.scoresAll, aes(x = NMDS1, y = NMDS2, color = pair, shape = pair)) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c(red100, blue100, green100, purple100, 
+                                orange100, grey100,
+                                red75, blue75, green75, purple75, orange75, grey75,
+                                red50, blue50, green50, purple50, orange50, grey50,
+                                
+                                red100, blue100, green100, purple100, 
+                                orange100, grey100,
+                                red75, blue75, green75, purple75, orange75, grey75,
+                                red50, blue50, green50, purple50, orange50, grey50,
+                                
+                                red100, blue100, green100, purple100, 
+                                orange100, grey100,
+                                red75, blue75, green75, purple75, orange75, grey75,
+                                red50, blue50, green50, purple50, orange50, grey50,
+                                
+                                red100, blue100, green100, purple100, 
+                                orange100, grey100,
+                                red75, blue75, green75, purple75, orange75, grey75,
+                                red50, blue50, green50, purple50, orange50, grey50,
+                                
+                                red100, blue100, green100, purple100, 
+                                orange100, grey100,
+                                red75, blue75, green75, purple75, orange75, grey75,
+                                red50, blue50, green50, purple50, orange50, grey50,
+                                
+                                red100, blue100, green100, purple100, 
+                                orange100, grey100,
+                                red75, blue75, green75, purple75, orange75
+                                
+                               )) +
+  scale_shape_manual(values = c(19, 15, 18, 17, 3, 8,
+                                19, 15, 18, 17, 3, 8,
+                                19, 15, 18, 17, 3, 8,
+                                
+                                15, 18, 17, 3, 8, 19,
+                                15, 18, 17, 3, 8, 19,
+                                15, 18, 17, 3, 8, 19,
+                                
+                                18, 17, 3, 8, 19, 15,
+                                18, 17, 3, 8, 19, 15,
+                                18, 17, 3, 8, 19, 15,
+                                
+                                17, 3, 8, 19, 15, 18,
+                                17, 3, 8, 19, 15, 18,
+                                17, 3, 8, 19, 15, 18,
+                                
+                                3, 8, 19, 15, 18, 17,
+                                3, 8, 19, 15, 18, 17,
+                                3, 8, 19, 15, 18, 17,
+                                
+                                8, 19, 15, 18, 17, 3,
+                                8, 19, 15, 18, 17
+                                )) +
+  theme_pubr(border = TRUE, legend = "none")
+
+#repeat alpha diversity analysis (mild/moderate/severe BSI)
+metadata_all$speciesNumber <- specnumber(all01_t)
+metadata_all$shannon <- diversity(all01_t, index = "shannon")
+
+
+metadata_all %>% 
+  kruskal_test(shannon ~ tool)
+#p=0.00003
+metadata_all %>%
+  kruskal_effsize(shannon ~ tool, ci = TRUE) 
+  
+stat.testAll <- metadata_all %>%
+  dunn_test(shannon ~ tool, p.adjust.method = "BH") %>%
+  add_xy_position(x = "tool")
+
+stat.testAll
+
+  
+
+ggplot(metadata_all, aes(x = tool, y = shannon)) +
+  geom_violin(width = 0.5) +
+  geom_point() +
+  ylab("Shannon diversity") + xlab("Tool") +
+  scale_x_discrete(labels = c("KrakenUniq", "MetaPhlAn3", "Wochenende")) +
+  theme_pubr(border = TRUE) +
+  stat_pvalue_manual(stat.testAll, label = "p.adj.signif",
+                     tip.length = 0.01) +
+  #stat_compare_means() +
+  geom_pointrange(mapping = aes(x = tool, y = shannon),
+                  stat = "summary",
+                  fun.min = function(z) {quantile(z,0.25)},
+                  fun.max = function(z) {quantile(z,0.75)},
+                  fun = median,
+                  colour = "red", size = 0.3)
+
+
+
+kraken_shannon <- subset(metadata_all, tool == "krakenuniq")
+kraken_shannon00 <- kraken_shannon$shannon
+metaphlan_shannon <- subset(metadata_all, tool == "metaphlan")
+metaphlan_shannon00 <-metaphlan_shannon$shannon
+wochenende_shannon <- subset(metadata_all, tool == "metaphlan")
+wochenende_shannon00 <-wochenende_shannon$shannon
+
+d <- data.frame(kraken_shannon00, metaphlan_shannon00, wochenende_shannon00)
+colnames(d) <- c("KrakenUniq", "MetaPhlAn3", "Wochenende")
+
+
+```
+
+#Maaslin2
+```{r}
+
+if(!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("Maaslin2")
+
+
+library(Maaslin2)
+
+#bronchiectasis vs healthy
+input_data <- read.table(file = "BE_healthy_taxonomy.tsv",
+                         header = TRUE,
+                         sep = "\t",
+                         row.names = 1,
+                         stringsAsFactors = FALSE)
+
+input_metadata <- read.table(file = "BE_healthy_metadata.tsv",
+                             header = TRUE,
+                             sep = "\t",
+                             stringsAsFactors = FALSE,
+                             row.names = 1
+                             )
+
+#remove smokers from healthy controls: Sp115, Sp155, Sp281, Sp320, Sp414, Sp416, Sp768, Sp941
+smokersToRemove <- c("Sp_115", "Sp_155", "Sp_281", "Sp_320", "Sp_414", "Sp_416", 
+                     "Sp_768", "Sp_941")
+
+#bronchiectasis BSI/DMM
+input_data <- input_data[!(row.names(input_data) %in% smokersToRemove),]
+input_metadata <- input_metadata[!(row.names(input_metadata) %in% smokersToRemove),]
+
+fit.data = Maaslin2(input_data = input_data,
+                    input_metadata = input_metadata,
+                    min_prevalence = 0,
+                    normalization = "NONE",
+                    output = "demo_output_healthy_BE",
+                    fixed_effects = c("state"))
+
+input_data_BE <- read.table(file = "BE_taxonomy.tsv",
+                         header = TRUE,
+                         sep = "\t",
+                         row.names = 1,
+                         stringsAsFactors = FALSE)
+
+input_metadata_BE <- read.table(file = "BE_metadata.tsv",
+                             header = TRUE,
+                             sep = "\t",
+                             stringsAsFactors = FALSE,
+                             row.names = 1
+                             )
+
+#input_metadata_BE$DMM <- as.character(DMM_resultsForMaaslin)
+
+
+fit.data_BE = Maaslin2(input_data = input_data_BE,
+                    input_metadata = input_metadata_BE,
+                    min_prevalence = 0,
+                    normalization = "NONE",
+                    output = "demo_output_BE_DMM_BSI",
+                    fixed_effects = c("BSI", "DMM"),
+                    reference = c("BSI,mild", "DMM,1"))
+
+fit.data_BE = Maaslin2(input_data = input_data_BE,
+                    input_metadata = input_metadata_BE,
+                    min_prevalence = 0,
+                    normalization = "NONE",
+                    output = "demo_output_BE_BSI_mild",
+                    fixed_effects = c("BSI"),
+                    reference = c("BSI,mild"))
+
+fit.data_BE = Maaslin2(input_data = input_data_BE,
+                    input_metadata = input_metadata_BE,
+                    min_prevalence = 0,
+                    normalization = "NONE",
+                    output = "demo_output_BE_BSI_moderate",
+                    fixed_effects = c("BSI"),
+                    reference = c("BSI,moderate"))
+
+fit.data_BE = Maaslin2(input_data = input_data_BE,
+                    input_metadata = input_metadata_BE,
+                    min_prevalence = 0,
+                    normalization = "NONE",
+                    output = "demo_output_BE_BSI_severe",
+                    fixed_effects = c("BSI"),
+                    reference = c("BSI,severe"))
+```
+
